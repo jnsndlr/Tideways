@@ -153,6 +153,195 @@ canvas {
 .route-stats span {
   color: var(--txt-dim);
 }
+/* ---- Reputation meters ---- */
+.rep-cell {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.mini-meter {
+  display: inline-block;
+  width: 28px;
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+.mini-meter i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--good);
+}
+.meter {
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+.meter i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--good);
+}
+
+/* ---- Ticket pricing ---- */
+.price-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.price {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #0e2839;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 4px 8px;
+}
+.price > span {
+  font-size: 10px;
+  color: var(--txt-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  flex: 1;
+}
+.price > b {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  min-width: 30px;
+  text-align: center;
+}
+.price button {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--panel2);
+  color: var(--txt);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* ---- Dock detail overlay ---- */
+#dock-detail {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 10px;
+  background: rgba(11, 30, 42, 0.96);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px 14px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(6px);
+}
+.dd-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.dd-name {
+  font-weight: 800;
+  font-size: 15px;
+  flex: 1;
+}
+.dd-close {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--txt-dim);
+  font-size: 13px;
+}
+.dd-rep {
+  margin: 10px 0;
+}
+.dd-rep-top {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--txt-dim);
+  margin-bottom: 5px;
+}
+.dd-rep-top b {
+  font-size: 13px;
+}
+.dd-rows {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 14px;
+}
+.dd-rows > div {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--txt-dim);
+}
+.dd-rows b {
+  color: var(--txt);
+  font-variant-numeric: tabular-nums;
+}
+.dd-hint {
+  margin-top: 10px;
+  font-size: 10px;
+  color: var(--txt-dim);
+  font-style: italic;
+}
+
+/* ---- Schedule editor ---- */
+.sched {
+  display: flex;
+  gap: 4px;
+  margin-top: 8px;
+}
+.band-chip {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 6px 2px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #0e2839;
+  color: var(--txt);
+}
+.band-chip .bl {
+  font-size: 9px;
+  color: var(--txt-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.band-chip .bh {
+  font-size: 13px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.band-chip.off .bh {
+  color: var(--txt-dim);
+}
+.sched-sum {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--txt-dim);
+}
+.sched-sum b {
+  color: var(--txt);
+  font-variant-numeric: tabular-nums;
+}
+.sched-sum .spacer {
+  flex: 1;
+}
+
 .boat-row {
   display: flex;
   align-items: center;
@@ -199,4 +388,100 @@ canvas {
 #buy:disabled {
   color: var(--txt-dim);
   opacity: 0.5;
+}
+
+/* ============================ v0.2 additions ============================ */
+#panel { max-height: 56%; }
+
+/* segment breakdown on route cards */
+.seg-row { display: flex; gap: 6px; margin-top: 8px; }
+.seg-pill {
+  display: flex; align-items: center; gap: 4px;
+  border: 1px solid var(--line); border-left-width: 3px;
+  border-radius: 6px; padding: 3px 7px; font-size: 11px; color: var(--txt-dim);
+}
+.seg-pill i { width: 6px; height: 6px; border-radius: 50%; }
+.seg-pill b { color: var(--txt); font-variant-numeric: tabular-nums; }
+
+/* fleet list */
+.fleet-row {
+  display: flex; align-items: center; gap: 8px; padding: 6px 2px;
+  font-size: 12px; border-bottom: 1px solid rgba(255,255,255,.05);
+}
+.fleet-name { font-weight: 700; }
+.fleet-class {
+  font-size: 10px; color: #05222e; background: var(--accent);
+  border-radius: 5px; padding: 1px 6px; font-weight: 700;
+}
+.fleet-cap { color: var(--txt-dim); }
+.fleet-trips { margin-left: auto; color: var(--txt-dim); font-variant-numeric: tabular-nums; }
+
+/* buy menu */
+#buy-wrap { margin-top: 8px; }
+.buy-head {
+  font-size: 11px; color: var(--txt-dim); text-transform: uppercase;
+  letter-spacing: .5px; margin-bottom: 6px;
+}
+.buy-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+.buy-card {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
+  border: 1px solid var(--line); background: var(--panel2); color: var(--txt);
+  border-radius: 9px; padding: 8px 10px; text-align: left;
+}
+.buy-card b { font-size: 13px; }
+.buy-card span { font-size: 10px; color: var(--txt-dim); }
+.buy-card em { font-style: normal; font-weight: 700; color: var(--gold); margin-top: 2px; }
+.buy-card:disabled { opacity: .4; }
+
+/* dock-detail segment list */
+.dd-segs { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
+.dd-seg {
+  display: flex; justify-content: space-between; font-size: 11px;
+  border-left: 3px solid var(--line); padding: 3px 8px;
+  background: rgba(255,255,255,.03); border-radius: 4px; color: var(--txt-dim);
+}
+.dd-seg b { color: var(--txt); }
+
+/* ---- Drag-drop timeline ---- */
+#timeline {
+  background: var(--panel2); border: 1px solid var(--line);
+  border-radius: 10px; padding: 8px; margin-bottom: 6px; touch-action: none;
+}
+.tl-palette { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
+.tl-hint { font-size: 10px; color: var(--txt-dim); flex: 1 0 100%; }
+.tl-chip {
+  border: none; border-radius: 6px; padding: 5px 10px; color: #05222e;
+  font-size: 11px; font-weight: 800; touch-action: none; cursor: grab;
+}
+.tl-axis { position: relative; height: 12px; margin: 0 0 2px 64px; }
+.tl-axis span {
+  position: absolute; transform: translateX(-50%); font-size: 9px; color: var(--txt-dim);
+}
+.tl-row { display: flex; align-items: stretch; gap: 6px; margin-bottom: 5px; }
+.tl-label {
+  width: 58px; flex-shrink: 0; display: flex; flex-direction: column; line-height: 1.1;
+  justify-content: center;
+}
+.tl-label b { font-size: 11px; }
+.tl-label span { font-size: 9px; color: var(--txt-dim); }
+.tl-lane {
+  position: relative; flex: 1; height: 30px; border-radius: 6px;
+  background: repeating-linear-gradient(90deg, #0c2230 0 1px, #102b3c 1px 2px);
+  background-color: #0c2230; overflow: hidden;
+}
+.tl-block {
+  position: absolute; top: 2px; bottom: 2px; min-width: 14px;
+  border-radius: 4px; color: #05222e; display: flex; align-items: center;
+  padding: 0 4px; overflow: hidden; touch-action: none; cursor: grab;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.2);
+}
+.tl-bt { font-size: 9px; font-weight: 800; white-space: nowrap; overflow: hidden; }
+.tl-del {
+  margin-left: auto; border: none; background: rgba(0,0,0,.25); color: #fff;
+  border-radius: 4px; width: 15px; height: 15px; font-size: 9px; line-height: 1; flex-shrink: 0;
+}
+.tl-ghost {
+  position: fixed; z-index: 999; pointer-events: none; opacity: .85;
+  border-radius: 5px; padding: 4px 8px; font-size: 10px; font-weight: 800; color: #05222e;
+  box-shadow: 0 6px 16px rgba(0,0,0,.4);
 }

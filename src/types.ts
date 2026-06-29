@@ -1,65 +1,98 @@
-// Shared data shapes for the ferry simulation.
-// Keeping these explicit makes the model self-documenting and lets the sim run
-// headless (no DOM / no canvas) so it can be tested and parameter-swept.
+// Data shapes for the ferry simulation (v0.2: vessels, segments, interlining).
+// The sim runs headless (no DOM / no canvas) so it stays testable.
 
 export interface Vec2 {
   x: number;
   y: number;
 }
 
+// ---- Static definitions (from CONFIG) -------------------------------------
+
+export interface VesselClass {
+  id: string;
+  name: string;
+  short: string;
+  peopleCap: number; // total people incl. those in cars
+  carCap: number; // car-deck slots (0 = passenger-only)
+  speedFactor: number; // >1 faster: crossing = route.crossingMin / speedFactor
+  fuelPerNm: number; // $ per nautical mile per crossing
+  cost: number;
+}
+
+export interface SegmentDef {
+  id: string;
+  name: string;
+  color: string;
+  icon: string;
+  patienceMin: number; // how long this segment tolerates waiting
+  elastFoot: number; // price elasticity (foot)
+  elastCar: number; // price elasticity (car)
+  peaks: [number, number, number][]; // [centerMin, widthMin, height] daily curve
+}
+
 export interface RouteDef {
   id: string;
   name: string;
   color: string;
-  distanceNm: number; // one-way distance, nautical miles
-  crossingMin: number; // one-way crossing time, in-game minutes
-  dailyFoot: number; // potential foot trips/day (both directions)
-  dailyCars: number; // potential car trips/day (both directions)
-  pos: Vec2; // normalized 0..1 map position of the destination terminal
+  distanceNm: number;
+  crossingMin: number; // base one-way crossing at speedFactor 1.0
+  pos: Vec2;
+  demand: Record<string, { foot: number; car: number }>; // by segment id
 }
 
-export interface Queue {
-  foot: number; // foot passengers waiting
-  car: number; // cars waiting
-  footWait: number; // minutes the foot queue has been waiting
-  carWait: number; // minutes the car queue has been waiting
+// ---- Runtime state --------------------------------------------------------
+
+export interface SegQueue {
+  foot: number;
+  car: number;
+  wait: number; // minutes the oldest in this seg/dir has waited
 }
+
+export type DirQueue = Record<string, SegQueue>; // segment id -> queue
 
 export interface RouteState {
   def: RouteDef;
-  out: Queue; // hub -> destination
-  in: Queue; // destination -> hub
-  servedToday: number; // people served today (foot + in-car)
-  balkedToday: number; // people who gave up today
+  out: DirQueue; // hub -> destination
+  in: DirQueue; // destination -> hub
+  servedToday: number;
+  balkedToday: number;
+  balkedYesterday: number;
+  sailingsToday: number;
+  rep: number; // per-community reputation 0..100
+  demandRep: number; // reputation snapshot driving today's turnout
+  footPrice: number;
+  carPrice: number;
 }
 
-export type BoatPhase = "hub" | "out" | "dest" | "back";
-export type Direction = "out" | "in";
-
-export interface BoatCargo {
-  foot: number;
-  car: number;
-  dir: Direction;
+export interface Trip {
+  id: number;
+  routeId: string;
+  depart: number; // in-game minute of scheduled hub departure
 }
+
+export type BoatPhase = "idle" | "hub" | "out" | "dest" | "back";
 
 export interface Boat {
   id: number;
   name: string;
-  routeId: string | null; // currently serving (adopted at hub)
-  pendingRoute: string | null; // queued assignment, takes effect at hub
+  classId: string;
+  itinerary: Trip[]; // ordered daily timetable (repeats each day)
+  nextTripIdx: number; // pointer into itinerary for today
   phase: BoatPhase;
-  p: number; // 0..1 progress along the crossing
+  routeId: string | null; // route of the active trip
+  p: number; // 0..1 along the current crossing
   timer: number; // minutes elapsed during a load
-  pax: BoatCargo; // cargo currently aboard
+  pax: { foot: number; car: number }; // aggregate cargo (for display)
 }
 
 export interface GameState {
   cash: number;
   day: number;
-  clock: number; // in-game minutes 0..1440
-  rep: number; // reputation 0..100
-  speed: number; // 0 | 1 | 2 | 4
+  clock: number;
+  rep: number; // fleet-wide average (HUD)
+  speed: number;
   routes: Record<string, RouteState>;
   boats: Boat[];
   boatCounter: number;
+  tripCounter: number;
 }

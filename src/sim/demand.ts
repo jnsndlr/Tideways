@@ -1,43 +1,42 @@
 import { CONFIG } from "../config";
-import type { GameState } from "../types";
+import type { GameState, SegmentDef } from "../types";
+import { carPriceFactor, footPriceFactor, repFactor } from "./demandResponse";
 
-// Daily demand curve: morning + evening commute peaks plus a midday tourist
-// bump. Returns an unnormalized weight for a given in-game minute.
-export function dayCurve(min: number): number {
+// Each segment has its own daily curve shape (from its peaks).
+export function segCurve(seg: SegmentDef, min: number): number {
   if (min < CONFIG.operatingStart || min > CONFIG.operatingEnd) return 0;
-  const peak = (c: number, w: number, h: number) =>
-    h * Math.exp(-((min - c) ** 2) / (2 * w * w));
-  const base = 0.2;
-  return (
-    base +
-    peak(8 * 60, 60, 2.4) + // morning commute
-    peak(17 * 60, 80, 2.0) + // evening commute
-    peak(13 * 60, 120, 0.7) // midday tourist bump
-  );
+  let v = 0.12; // small baseline
+  for (const [c, w, h] of seg.peaks) v += h * Math.exp(-((min - c) ** 2) / (2 * w * w));
+  return v;
 }
 
-// Area under the curve across the operating window, so dailyFoot/dailyCars are
-// actually delivered over the day. Computed once.
-const CURVE_AREA = (() => {
-  let area = 0;
-  for (let m = CONFIG.operatingStart; m <= CONFIG.operatingEnd; m++) {
-    area += dayCurve(m);
+// Normalize each segment's curve so its daily totals are actually delivered.
+const SEG_AREA: Record<string, number> = (() => {
+  const out: Record<string, number> = {};
+  for (const seg of CONFIG.segments) {
+    let a = 0;
+    for (let m = CONFIG.operatingStart; m <= CONFIG.operatingEnd; m++) a += segCurve(seg, m);
+    out[seg.id] = a;
   }
-  return area;
+  return out;
 })();
 
-/** Add newly-arrived demand to every route's queues for a time slice. */
+/** Add newly-arrived demand to every route's per-segment queues. */
 export function accrueDemand(state: GameState, dtMin: number): void {
-  const w = dayCurve(state.clock) / CURVE_AREA; // fraction of daily total / min
-  if (w <= 0) return;
   for (const id in state.routes) {
     const R = state.routes[id];
-    const foot = R.def.dailyFoot * w * dtMin;
-    const car = R.def.dailyCars * w * dtMin;
-    // split evenly between the two directions
-    R.out.foot += foot / 2;
-    R.in.foot += foot / 2;
-    R.out.car += car / 2;
-    R.in.car += car / 2;
+    const rf = repFactor(R.demandRep); // yesterday's service shapes today
+    for (const seg of CONFIG.segments) {
+      const w = segCurve(seg, state.clock) / SEG_AREA[seg.id];
+      if (w <= 0) continue;
+      const base = R.def.demand[seg.id];
+      if (!base) continue;
+      const foot = base.foot * w * dtMin * rf * footPriceFactor(R, seg);
+      const car = base.car * w * dtMin * rf * carPriceFactor(R, seg);
+      R.out[seg.id].foot += foot / 2;
+      R.in[seg.id].foot += foot / 2;
+      R.out[seg.id].car += car / 2;
+      R.in[seg.id].car += car / 2;
+    }
   }
 }

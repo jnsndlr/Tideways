@@ -1,100 +1,120 @@
-import { CONFIG } from "../config";
-import type { Boat, GameState, Queue, RouteState } from "../types";
+import { CONFIG, vesselById } from "../config";
+import type { Boat, DirQueue, GameState, RouteState } from "../types";
+import { crossingFor } from "./schedule";
 
 /**
- * Load a boat from a queue, enforcing the deck rule:
- *   - at most carCap cars
- *   - total people (foot + people-in-cars) <= peopleCap
- * Mutates the queue and the boat's cargo, and books fare revenue + reputation.
+ * Load a boat from a direction's per-segment queues, enforcing the deck rule:
+ *   cars <= carCap  and  total people (foot + in-car) <= peopleCap.
+ * Cars and foot are drawn proportionally across segments. Passenger-only
+ * vessels (carCap 0) leave all cars behind to balk — that's the point.
  */
-export function loadBoat(state: GameState, boat: Boat, q: Queue, R: RouteState): void {
-  const F = CONFIG.ferry;
+export function loadBoat(state: GameState, boat: Boat, dir: DirQueue, R: RouteState): void {
+  const vc = vesselById(boat.classId);
+  const occ = CONFIG.avgOccupancy;
 
-  const carsAvail = Math.floor(q.car);
-  const carsLoaded = Math.min(carsAvail, F.carCap);
-  const peopleFromCars = carsLoaded * F.avgOccupancy;
+  let totalCar = 0;
+  let totalFoot = 0;
+  for (const seg of CONFIG.segments) {
+    totalCar += dir[seg.id].car;
+    totalFoot += dir[seg.id].foot;
+  }
 
-  const footRoom = Math.max(0, F.peopleCap - peopleFromCars);
-  const footLoaded = Math.min(Math.floor(q.foot), footRoom);
+  const carsByPeople = occ > 0 ? vc.peopleCap / occ : Infinity;
+  const carsLoaded = Math.max(
+    0,
+    Math.min(Math.floor(totalCar), vc.carCap, Math.floor(carsByPeople)),
+  );
+  const peopleFromCars = carsLoaded * occ;
+  const footRoom = Math.max(0, vc.peopleCap - peopleFromCars);
+  const footLoaded = Math.min(Math.floor(totalFoot), footRoom);
 
-  q.car -= carsLoaded;
-  q.foot -= footLoaded;
-  if (q.car < 0.5) q.carWait = 0;
-  if (q.foot < 0.5) q.footWait = 0;
+  if (totalCar > 0 && carsLoaded > 0) {
+    const frac = carsLoaded / totalCar;
+    for (const seg of CONFIG.segments) dir[seg.id].car -= dir[seg.id].car * frac;
+  }
+  if (totalFoot > 0 && footLoaded > 0) {
+    const frac = footLoaded / totalFoot;
+    for (const seg of CONFIG.segments) dir[seg.id].foot -= dir[seg.id].foot * frac;
+  }
+  for (const seg of CONFIG.segments) {
+    const q = dir[seg.id];
+    if (q.foot < 0.5 && q.car < 0.5) q.wait = 0;
+  }
 
   boat.pax.foot = footLoaded;
   boat.pax.car = carsLoaded;
 
-  const revenue = carsLoaded * CONFIG.fare.car + footLoaded * CONFIG.fare.foot;
-  state.cash += revenue;
-
+  state.cash += carsLoaded * R.carPrice + footLoaded * R.footPrice;
   const served = footLoaded + peopleFromCars;
   R.servedToday += served;
-  state.rep += served * CONFIG.repServedGain;
+  R.rep += served * CONFIG.repServedGain;
 }
 
-/** Charge fuel for one crossing of a route. */
-export function chargeFuel(state: GameState, R: RouteState): void {
-  state.cash -= R.def.distanceNm * CONFIG.fuelCostPerNm;
+export function chargeFuel(state: GameState, boat: Boat, R: RouteState): void {
+  state.cash -= R.def.distanceNm * vesselById(boat.classId).fuelPerNm;
 }
 
-/** Advance a single boat through its hub -> out -> dest -> back cycle. */
+/** Advance one boat along its daily itinerary (interlining-aware). */
 export function stepBoat(state: GameState, boat: Boat, dtMin: number): void {
   const open =
     state.clock >= CONFIG.operatingStart && state.clock < CONFIG.operatingEnd;
 
   switch (boat.phase) {
-    case "hub": {
-      // adopt any pending reassignment while docked at the shared hub
-      boat.routeId = boat.pendingRoute;
-      if (!boat.routeId || !open) {
+    case "idle": {
+      const trip = boat.itinerary[boat.nextTripIdx];
+      if (!trip || !open) return; // done for the day, or closed
+      if (state.clock >= trip.depart) {
+        boat.routeId = trip.routeId;
+        boat.phase = "hub";
         boat.timer = 0;
-        return;
       }
-      const R = state.routes[boat.routeId];
+      break;
+    }
+    case "hub": {
+      const R = state.routes[boat.routeId!];
       boat.timer += dtMin;
-      if (boat.timer >= CONFIG.ferry.loadMinutes) {
-        loadBoat(state, boat, R.out, R); // load hub -> dest passengers
-        chargeFuel(state, R);
+      if (boat.timer >= CONFIG.loadMinutes) {
+        loadBoat(state, boat, R.out, R);
+        chargeFuel(state, boat, R);
+        R.sailingsToday++;
         boat.phase = "out";
         boat.p = 0;
         boat.timer = 0;
-        boat.pax.dir = "out";
       }
       break;
     }
     case "out": {
       const R = state.routes[boat.routeId!];
-      boat.p += dtMin / R.def.crossingMin;
+      boat.p += dtMin / crossingFor(R, boat.classId);
       if (boat.p >= 1) {
         boat.p = 1;
         boat.phase = "dest";
         boat.timer = 0;
-        boat.pax = { foot: 0, car: 0, dir: "in" };
+        boat.pax = { foot: 0, car: 0 };
       }
       break;
     }
     case "dest": {
       const R = state.routes[boat.routeId!];
       boat.timer += dtMin;
-      if (boat.timer >= CONFIG.ferry.loadMinutes) {
-        loadBoat(state, boat, R.in, R); // load dest -> hub passengers
-        chargeFuel(state, R);
+      if (boat.timer >= CONFIG.loadMinutes) {
+        loadBoat(state, boat, R.in, R);
+        chargeFuel(state, boat, R);
         boat.phase = "back";
         boat.p = 1;
         boat.timer = 0;
-        boat.pax.dir = "in";
       }
       break;
     }
     case "back": {
       const R = state.routes[boat.routeId!];
-      boat.p -= dtMin / R.def.crossingMin;
+      boat.p -= dtMin / crossingFor(R, boat.classId);
       if (boat.p <= 0) {
         boat.p = 0;
-        boat.phase = "hub";
-        boat.timer = 0;
-        boat.pax = { foot: 0, car: 0, dir: "out" };
+        boat.phase = "idle";
+        boat.routeId = null;
+        boat.nextTripIdx++;
+        boat.pax = { foot: 0, car: 0 };
       }
       break;
     }
