@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "tideways",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "5181", "--directory", "/Users/jon/Documents/GitHub/Tideways"],
+      "port": 5181
+    }
+  ]
+}
