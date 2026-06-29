@@ -1,0 +1,16 @@
+{
+  "name": "tideways",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "PNW ferry management sim — design prototype",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vite": "^6.0.7"
+  }
+}

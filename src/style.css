@@ -1,0 +1,202 @@
+:root {
+  --water: #15445f;
+  --land: #3f6b4a;
+  --panel: #0e2533;
+  --panel2: #143348;
+  --line: #2a5973;
+  --txt: #e8f1f6;
+  --txt-dim: #9fbccc;
+  --gold: #f3c14b;
+  --good: #5bd49a;
+  --bad: #f0795f;
+  --accent: #57b6e0;
+}
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: #08151f;
+  color: var(--txt);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  overflow: hidden;
+  user-select: none;
+}
+#app {
+  max-width: 480px;
+  margin: 0 auto;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: #08151f;
+}
+
+/* ---- Top HUD ---- */
+#hud {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+.stat {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.1;
+}
+.stat .label {
+  font-size: 9px;
+  color: var(--txt-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.stat .val {
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+#cash .val {
+  color: var(--gold);
+}
+.spacer {
+  flex: 1;
+}
+#speed {
+  display: flex;
+  gap: 4px;
+}
+#speed button {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--panel2);
+  color: var(--txt);
+  font-size: 12px;
+  font-weight: 700;
+}
+#speed button.active {
+  background: var(--accent);
+  color: #05222e;
+  border-color: var(--accent);
+}
+
+/* ---- Map ---- */
+#map-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* ---- Control panel ---- */
+#panel {
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+  padding: 8px 10px 12px;
+  max-height: 46%;
+  overflow-y: auto;
+}
+.panel-title {
+  font-size: 10px;
+  color: var(--txt-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  margin: 4px 2px;
+}
+.route-card {
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+}
+.route-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.route-name {
+  font-weight: 700;
+  font-size: 13px;
+  flex: 1;
+}
+.route-sub {
+  font-size: 10px;
+  color: var(--txt-dim);
+}
+.route-stats {
+  display: flex;
+  gap: 12px;
+  margin-top: 6px;
+  font-size: 11px;
+}
+.route-stats b {
+  color: var(--txt);
+  font-variant-numeric: tabular-nums;
+}
+.route-stats span {
+  color: var(--txt-dim);
+}
+.boat-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 2px;
+}
+.boat-tag {
+  font-size: 12px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.seg {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+}
+.seg button {
+  flex: 1;
+  padding: 7px 4px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #0e2839;
+  color: var(--txt-dim);
+  font-size: 11px;
+  font-weight: 600;
+}
+.seg button.on {
+  color: #05222e;
+  font-weight: 800;
+}
+#buy {
+  width: 100%;
+  padding: 11px;
+  border-radius: 10px;
+  border: 1px dashed var(--line);
+  background: transparent;
+  color: var(--gold);
+  font-size: 13px;
+  font-weight: 700;
+  margin-top: 2px;
+}
+#buy:disabled {
+  color: var(--txt-dim);
+  opacity: 0.5;
+}
