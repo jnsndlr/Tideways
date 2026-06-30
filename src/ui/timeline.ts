@@ -53,7 +53,7 @@ export class Timeline {
     pal.appendChild(hint);
     for (const id in this.state.routes) {
       const R = this.state.routes[id];
-      if (!R.hasDock) continue; // can't schedule sailings to a locked island
+      if (!R.slips.length) continue; // can't schedule sailings to a locked island
       const chip = document.createElement("button");
       chip.className = "tl-chip";
       chip.style.background = R.def.color;
@@ -189,9 +189,10 @@ export class Timeline {
     this.drag = null;
 
     const hit = this.laneAt(e.clientX, e.clientY - 0);
-    // a boat can only call at a dock big enough to berth it
+    // a boat can only call at a port with a slip big enough to berth it
+    const slips = this.state.routes[drag.routeId].slips;
     const fitsDock =
-      hit && vesselRank(hit.boat.classId) <= this.state.routes[drag.routeId].dockTier;
+      hit && slips.length > 0 && vesselRank(hit.boat.classId) <= Math.max(...slips);
     if (hit && fitsDock) {
       const dur = tripDuration(this.state.routes[drag.routeId], hit.boat.classId);
       const desired = START + ((e.clientX - drag.grabDx - hit.rect.left) / hit.rect.width) * SPAN;

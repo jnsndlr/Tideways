@@ -17,6 +17,7 @@ export interface VesselClass {
   speedFactor: number; // >1 faster: crossing = route.crossingMin / speedFactor
   fuelPerNm: number; // $ per nautical mile per crossing
   cost: number;
+  dailyCost: number; // fixed daily overhead to own the hull (idle or not)
 }
 
 export interface SegmentDef {
@@ -65,8 +66,7 @@ export interface RouteState {
   demandRep: number; // route-average snapshot (derived; for summaries)
   footPrice: number;
   carPrice: number;
-  hasDock: boolean; // false = locked island; build a dock to open it
-  dockTier: number; // largest vessel rank this dock can berth (-1 = no dock)
+  slips: number[]; // size tier of each slip; empty = locked island (no dock)
 }
 
 export interface Trip {
@@ -100,4 +100,8 @@ export interface GameState {
   boats: Boat[];
   boatCounter: number;
   tripCounter: number;
+  hubSlips: number[]; // home-port berths: count = fleet cap, tiers = ownable sizes
+  daysInDebt: number; // consecutive day rollovers ending with cash < 0
+  gameOver: boolean;
+  companyValue: number; // cash + resale value of the fleet (HUD score)
 }

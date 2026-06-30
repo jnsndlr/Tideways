@@ -1,4 +1,4 @@
-import { CONFIG } from "../config";
+import { CONFIG, vesselById } from "../config";
 import type { GameState, RouteState, SegmentDef } from "../types";
 import { accrueDemand } from "./demand";
 import { stepBoat } from "./ferry";
@@ -50,6 +50,16 @@ export function step(state: GameState, dtMin: number): void {
       R.balkedToday = 0;
       R.sailingsToday = 0;
     }
+
+    // fleet upkeep: every hull costs its daily overhead, sailing or idle
+    let upkeep = 0;
+    for (const b of state.boats) upkeep += vesselById(b.classId).dailyCost;
+    state.cash -= upkeep;
+
+    // solvency: run in the red too long and the company folds
+    state.daysInDebt = state.cash < 0 ? state.daysInDebt + 1 : 0;
+    if (state.daysInDebt > CONFIG.economy.bankruptcyGraceDays) state.gameOver = true;
+
     // new day: every boat restarts its daily itinerary
     for (const b of state.boats) {
       b.nextTripIdx = 0;
@@ -78,16 +88,21 @@ export function step(state: GameState, dtMin: number): void {
     R.demandRep =
       CONFIG.segments.reduce((a, seg) => a + R.segDemandRep[seg.id], 0) /
       CONFIG.segments.length;
-    if (!R.hasDock) continue; // locked islands don't count toward fleet rep
+    if (!R.slips.length) continue; // locked islands don't count toward fleet rep
     sum += R.rep;
     n++;
   }
   state.rep = n ? sum / n : CONFIG.repNeutral;
+
+  // company value (HUD score): cash + resale value of the fleet
+  let resale = 0;
+  for (const b of state.boats) resale += vesselById(b.classId).cost * CONFIG.economy.resaleFactor;
+  state.companyValue = state.cash + resale;
 }
 
 /** Advance by a real-time delta with sub-stepping for stability. */
 export function advance(state: GameState, dtMin: number): void {
-  if (dtMin <= 0) return;
+  if (dtMin <= 0 || state.gameOver) return;
   const steps = Math.max(1, Math.ceil(dtMin / 5));
   for (let i = 0; i < steps; i++) step(state, dtMin / steps);
 }

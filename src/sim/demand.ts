@@ -25,7 +25,7 @@ const SEG_AREA: Record<string, number> = (() => {
 export function accrueDemand(state: GameState, dtMin: number): void {
   for (const id in state.routes) {
     const R = state.routes[id];
-    if (!R.hasDock) continue; // locked islands generate no demand until built
+    if (!R.slips.length) continue; // locked islands generate no demand until built
     for (const seg of CONFIG.segments) {
       const rf = repFactor(R.segDemandRep[seg.id]); // this segment's own standing
       const w = segCurve(seg, state.clock) / SEG_AREA[seg.id];

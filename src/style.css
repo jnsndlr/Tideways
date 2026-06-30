@@ -463,15 +463,49 @@ canvas {
 .dd-build:disabled, .dd-upgrade:disabled {
   background: transparent; color: var(--txt-dim); border-color: var(--line); opacity: .6;
 }
-.dd-tier {
-  display: flex; align-items: center; gap: 10px; margin-top: 10px;
-  border-top: 1px solid rgba(255,255,255,.06); padding-top: 8px;
+/* slip list (home port + island docks) */
+.dd-slips-title {
+  font-size: 9px; text-transform: uppercase; letter-spacing: .5px;
+  color: var(--txt-dim); margin: 10px 2px 4px;
 }
-.dd-tier-now { display: flex; flex-direction: column; line-height: 1.2; }
-.dd-tier-now span { font-size: 9px; text-transform: uppercase; letter-spacing: .4px; color: var(--txt-dim); }
-.dd-tier-now b { font-size: 13px; }
-.dd-tier .dd-upgrade { margin-top: 0; flex: 1; }
-.dd-tier-max { flex: 1; text-align: right; font-size: 11px; color: var(--good); font-weight: 700; }
+.slips { display: flex; flex-direction: column; gap: 5px; margin-top: 8px; }
+.slip-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.slip-name { flex: 1; color: var(--txt-dim); }
+.slip-name b { color: var(--txt); }
+.slip-up {
+  border: 1px solid var(--accent); background: transparent; color: var(--accent);
+  border-radius: 7px; padding: 5px 9px; font-size: 11px; font-weight: 700;
+}
+.slip-up:disabled { border-color: var(--line); color: var(--txt-dim); opacity: .6; }
+.slip-max { font-size: 10px; color: var(--good); font-weight: 700; }
+.slip-add {
+  margin-top: 3px; padding: 8px; border-radius: 8px;
+  border: 1px dashed var(--line); background: transparent; color: var(--gold);
+  font-size: 12px; font-weight: 700;
+}
+.slip-add:disabled { color: var(--txt-dim); opacity: .55; }
+
+.buy-warn { color: var(--bad); font-size: 9px; margin-top: 2px; }
+
+/* game over */
+#game-over {
+  position: fixed; inset: 0; z-index: 1000; display: flex;
+  align-items: center; justify-content: center;
+  background: rgba(4, 12, 18, 0.82); backdrop-filter: blur(3px);
+}
+.go-card {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+  padding: 22px 26px; text-align: center; max-width: 320px;
+  box-shadow: 0 12px 40px rgba(0,0,0,.5);
+}
+.go-title { font-size: 22px; font-weight: 800; color: var(--bad); }
+.go-sub { font-size: 13px; color: var(--txt-dim); margin: 8px 0 14px; }
+.go-stat { font-size: 13px; margin-bottom: 16px; }
+.go-stat b { color: var(--gold); }
+.go-btn {
+  padding: 10px 22px; border-radius: 9px; border: none;
+  background: var(--accent); color: #05222e; font-size: 14px; font-weight: 800;
+}
 
 /* ---- Drag-drop timeline ---- */
 #timeline {

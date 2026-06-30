@@ -102,15 +102,17 @@ export class MapRenderer {
     // route lines only to islands we actually serve
     for (const id of ids) {
       const R = state.routes[id];
-      if (R.hasDock) this.drawRouteLine(hub, this.px(R.def.pos), R.def.color);
+      if (R.slips.length) this.drawRouteLine(hub, this.px(R.def.pos), R.def.color);
     }
 
     // terminals (locked islands draw dimmed with a padlock)
     for (const id of ids) {
       const R = state.routes[id];
+      const docked = R.slips.length > 0;
+      const tier = docked ? Math.max(...R.slips) : -1;
       this.drawTerminal(
         this.px(R.def.pos), R.def.name, R.def.color, false,
-        R.hasDock ? R.rep : null, this.selected === id, !R.hasDock, R.dockTier,
+        docked ? R.rep : null, this.selected === id, !docked, tier,
       );
     }
     this.drawTerminal(hub, CONFIG.hub.name, "#57b6e0", true, null, this.selected === "hub", false, -1);
@@ -121,7 +123,7 @@ export class MapRenderer {
     let qi = 0;
     for (const id of ids) {
       const R = state.routes[id];
-      if (!R.hasDock) continue;
+      if (!R.slips.length) continue;
       const hubOff: Vec2 = { x: -54 + qi * 50, y: -64 };
       this.drawSegQueue(hub, hubOff, R.out);
       this.drawSegQueue(this.px(R.def.pos), { x: -18, y: 26 }, R.in);
@@ -149,7 +151,7 @@ export class MapRenderer {
 
   private drawTerminal(
     pt: Vec2, label: string, color: string, big: boolean,
-    rep: number | null, selected: boolean, locked: boolean, dockTier: number,
+    rep: number | null, selected: boolean, locked: boolean, berthTier: number,
   ): void {
     const { ctx } = this;
     const r = big ? 16 : 13;
@@ -194,7 +196,7 @@ export class MapRenderer {
       ctx.fillStyle = repColor(rep);
       ctx.fillRect(bx, by, (bw * rep) / 100, 4);
       // tier pips: how big a vessel this dock can berth
-      for (let i = 0; i <= dockTier; i++) {
+      for (let i = 0; i <= berthTier; i++) {
         ctx.fillStyle = "#eaf3f8";
         ctx.fillRect(bx + i * 5, by + 6, 3, 3);
       }

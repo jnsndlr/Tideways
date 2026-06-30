@@ -1,9 +1,11 @@
-import { CONFIG, maxDockTier, vesselById } from "../config";
+import { CONFIG, vesselById } from "../config";
 import {
+  addSlipCost,
+  buyBlocker,
   estDailyPeople,
-  nextDockCost,
   repFactor,
   segWaiting,
+  slipUpgradeCost,
   waitingPeople,
 } from "../sim";
 import { repColor } from "../render/canvas";
@@ -20,7 +22,8 @@ export interface PanelCallbacks {
   onBuy: (classId: string) => void;
   onSpeed: (speed: number) => void;
   onBuildDock: (routeId: string) => void;
-  onUpgradeDock: (routeId: string) => void;
+  onAddSlip: (portId: string) => void;
+  onUpgradeSlip: (portId: string, slipIdx: number) => void;
 }
 
 export class Panel {
@@ -57,7 +60,7 @@ export class Panel {
     this.routesEl.innerHTML = "";
     for (const id in this.state.routes) {
       const R = this.state.routes[id];
-      if (!R.hasDock) continue; // locked islands aren't in the route list yet
+      if (!R.slips.length) continue; // locked islands aren't in the route list yet
       const card = document.createElement("div");
       card.className = "route-card";
       card.innerHTML = `
@@ -138,26 +141,31 @@ export class Panel {
 
   private buildBuyMenu(): void {
     this.buyWrap.innerHTML = "";
-    const full = this.state.boats.length >= CONFIG.maxFleet;
+    const used = this.state.boats.length;
+    const cap = this.state.hubSlips.length;
+    const full = used >= cap;
     const head = document.createElement("div");
     head.className = "buy-head";
     head.textContent = full
-      ? `Fleet full (${CONFIG.maxFleet}/${CONFIG.maxFleet})`
-      : `Buy a ferry  (${this.state.boats.length}/${CONFIG.maxFleet})`;
+      ? `All ${cap} home berths full — add a berth at the home port`
+      : `Buy a ferry  (${used}/${cap} berths)`;
     this.buyWrap.appendChild(head);
     if (full) return;
 
     const grid = document.createElement("div");
     grid.className = "buy-grid";
     for (const vc of CONFIG.vesselClasses) {
+      const blocker = buyBlocker(this.state, vc.id);
       const btn = document.createElement("button");
       btn.className = "buy-card";
-      btn.disabled = this.state.cash < vc.cost;
+      btn.disabled = blocker !== null;
+      const note =
+        blocker === "size" ? "<span class='buy-warn'>needs a bigger berth</span>" : "";
       btn.innerHTML = `
         <b>${vc.short}</b>
         <span>${vc.peopleCap}p ${vc.carCap ? vc.carCap + "🚗" : "no cars"}</span>
-        <span>${vc.speedFactor}× speed</span>
-        <em>${money(vc.cost)}</em>`;
+        <span>${money(vc.dailyCost)}/day upkeep</span>
+        <em>${money(vc.cost)}</em>${note}`;
       btn.onclick = () => {
         this.cb.onBuy(vc.id);
         this.buildFleet();
@@ -170,17 +178,17 @@ export class Panel {
   // ---- dock detail ---------------------------------------------------------
 
   selectDock(id: string | null): void {
-    this.selectedDock = id && id !== "hub" ? id : null;
+    this.selectedDock = id ?? null; // "hub" opens the home-port panel
     this.renderDockDetail();
   }
 
   private dockKey(id: string): string {
-    const R = this.state.routes[id];
-    return `${id}|${R.hasDock}|${R.dockTier}`;
+    if (id === "hub") return `hub|${this.state.hubSlips.join(",")}|${this.state.boats.length}`;
+    return `${id}|${this.state.routes[id].slips.join(",")}`;
   }
 
   /** Rebuild the detail structure. Called only when the panel changes shape
-   *  (selection / build / upgrade) — NOT every frame, so the buttons survive
+   *  (selection / build / slip change) — NOT every frame, so the buttons survive
    *  long enough to be clicked. Live numbers are patched by refreshDockDetail. */
   private renderDockDetail(): void {
     const id = this.selectedDock;
@@ -189,31 +197,44 @@ export class Panel {
       this.detailKey = null;
       return;
     }
-    const R = this.state.routes[id];
     this.detailEl.hidden = false;
-    this.detailEl.innerHTML = R.hasDock ? this.openDockHtml(R) : this.lockedDockHtml(R);
+    if (id === "hub") {
+      this.detailEl.innerHTML = this.homePortHtml();
+    } else {
+      const R = this.state.routes[id];
+      this.detailEl.innerHTML = R.slips.length ? this.openDockHtml(R) : this.lockedDockHtml(R);
+    }
     this.detailEl.querySelector(".dd-close")!.addEventListener("click", () => this.selectDock(null));
     this.detailEl
       .querySelector(".dd-build")
       ?.addEventListener("click", () => this.cb.onBuildDock(id));
     this.detailEl
-      .querySelector(".dd-upgrade")
-      ?.addEventListener("click", () => this.cb.onUpgradeDock(id));
+      .querySelector(".slip-add")
+      ?.addEventListener("click", () => this.cb.onAddSlip(id));
+    this.detailEl.querySelectorAll<HTMLElement>(".slip-up").forEach((b) => {
+      const idx = parseInt(b.dataset.slip ?? "0", 10);
+      b.addEventListener("click", () => this.cb.onUpgradeSlip(id, idx));
+    });
     this.detailKey = this.dockKey(id);
   }
 
-  /** Per-frame: patch the live values in place without touching the buttons. */
+  /** Per-frame: patch live values + button affordability without rebuilding DOM. */
   private refreshDockDetail(): void {
     const id = this.selectedDock;
     if (!id) return;
-    const R = this.state.routes[id];
 
-    if (!R.hasDock) {
-      const cost = nextDockCost(R) ?? 0;
-      const b = this.detailEl.querySelector<HTMLButtonElement>(".dd-build");
-      if (b) b.disabled = this.state.cash < cost;
+    // every cost button carries data-cost; grey it out when unaffordable
+    this.detailEl.querySelectorAll<HTMLButtonElement>("[data-cost]").forEach((el) => {
+      el.disabled = this.state.cash < Number(el.dataset.cost);
+    });
+
+    if (id === "hub") {
+      this.setIn("[data-hub-fleet]", `${this.state.boats.length} / ${this.state.hubSlips.length}`);
+      this.setIn("[data-hub-upkeep]", money(this.fleetUpkeep()) + "/day");
       return;
     }
+    const R = this.state.routes[id];
+    if (!R.slips.length) return; // locked: only the build button needed refreshing
 
     const sw = segWaiting(R);
     for (const g of CONFIG.segments) {
@@ -233,9 +254,6 @@ export class Panel {
     }
     this.setIn("[data-dd-turnout]", Math.round(repFactor(R.demandRep) * 100) + "% of base");
     this.setIn("[data-dd-balked]", Math.round(R.balkedYesterday).toLocaleString());
-    const up = this.detailEl.querySelector<HTMLButtonElement>(".dd-upgrade");
-    const cost = nextDockCost(R);
-    if (up && cost !== null) up.disabled = this.state.cash < cost;
   }
 
   private setIn(sel: string, text: string): void {
@@ -243,43 +261,65 @@ export class Panel {
     if (el) el.textContent = text;
   }
 
-  private dockHead(R: RouteState): string {
+  private fleetUpkeep(): number {
+    return this.state.boats.reduce((a, b) => a + vesselById(b.classId).dailyCost, 0);
+  }
+
+  private dockHead(name: string, color: string): string {
     return `
       <div class="dd-head">
-        <div class="dot" style="background:${R.def.color}"></div>
-        <div class="dd-name">${R.def.name}</div>
+        <div class="dot" style="background:${color}"></div>
+        <div class="dd-name">${name}</div>
         <button class="dd-close">✕</button>
       </div>`;
   }
 
+  /** Slip list for any port: per-slip size + upgrade button, plus an add-berth button. */
+  private slipsHtml(slips: number[]): string {
+    const rows = slips
+      .map((tier, i) => {
+        const cost = slipUpgradeCost(tier);
+        const name = CONFIG.vesselClasses[tier].short;
+        const up =
+          cost === null
+            ? `<span class="slip-max">max size</span>`
+            : `<button class="slip-up" data-slip="${i}" data-cost="${cost}">▲ ${CONFIG.vesselClasses[tier + 1].short} · ${money(cost)}</button>`;
+        return `<div class="slip-row"><span class="slip-name">Slip ${i + 1} · <b>${name}</b></span>${up}</div>`;
+      })
+      .join("");
+    const addCost = addSlipCost(slips);
+    return `<div class="slips">${rows}
+      <button class="slip-add" data-cost="${addCost}">+ Add berth · ${money(addCost)}</button></div>`;
+  }
+
+  private homePortHtml(): string {
+    return `${this.dockHead(CONFIG.hub.name + " · Home Port", "#57b6e0")}
+      <div class="dd-rows">
+        <div><span>Fleet berths</span><b data-hub-fleet>${this.state.boats.length} / ${this.state.hubSlips.length}</b></div>
+        <div><span>Daily upkeep</span><b data-hub-upkeep>${money(this.fleetUpkeep())}/day</b></div>
+      </div>
+      ${this.slipsHtml(this.state.hubSlips)}
+      <div class="dd-hint">Berths cap your fleet size; a slip's size sets the largest vessel you can base. Add a berth to own more ferries; upgrade a slip to run bigger ones.</div>`;
+  }
+
   private lockedDockHtml(R: RouteState): string {
-    const cost = nextDockCost(R) ?? 0;
-    const afford = this.state.cash >= cost;
+    const cost = CONFIG.ports.buildSlipCost;
     const est = Math.round(estDailyPeople(R)).toLocaleString();
-    return `${this.dockHead(R)}
+    return `${this.dockHead(R.def.name, R.def.color)}
       <div class="dd-locked">🔒 No dock here yet</div>
       <div class="dd-rows">
         <div><span>Crossing</span><b>${R.def.distanceNm} nm · ${R.def.crossingMin} min</b></div>
         <div><span>Potential daily</span><b>${est}</b></div>
       </div>
-      <button class="dd-build" ${afford ? "" : "disabled"}>
-        Build dock — ${money(cost)} <em>(${CONFIG.vesselClasses[0].short}-class)</em>
+      <button class="dd-build" data-cost="${cost}">
+        Build dock — ${money(cost)} <em>(${CONFIG.vesselClasses[0].short}-class slip)</em>
       </button>
-      <div class="dd-hint">A new dock opens at ${CONFIG.vesselClasses[0].short} capacity. Upgrade it later for bigger vessels.</div>`;
+      <div class="dd-hint">A new dock opens with one ${CONFIG.vesselClasses[0].short} slip. Upgrade it or add berths later.</div>`;
   }
 
   private openDockHtml(R: RouteState): string {
     const sw = segWaiting(R);
     const turnout = Math.round(repFactor(R.demandRep) * 100);
-    const tierName = CONFIG.vesselClasses[R.dockTier].short;
-    const upCost = nextDockCost(R);
-    const upName = upCost !== null ? CONFIG.vesselClasses[R.dockTier + 1].short : null;
-    const afford = upCost !== null && this.state.cash >= upCost;
-    const upgrade =
-      upCost === null
-        ? `<div class="dd-tier-max">Top tier — berths every vessel</div>`
-        : `<button class="dd-upgrade" ${afford ? "" : "disabled"}>
-             Upgrade to ${upName} — ${money(upCost)}</button>`;
 
     const segs = CONFIG.segments
       .map((g) => {
@@ -292,7 +332,7 @@ export class Panel {
       })
       .join("");
 
-    return `${this.dockHead(R)}
+    return `${this.dockHead(R.def.name, R.def.color)}
       <div class="dd-rep">
         <div class="dd-rep-top"><span>Reputation by segment</span>
           <b data-dd-rep style="color:${repColor(R.rep)}">${Math.round(R.rep)} · ${repLabel(R.rep)}</b></div>
@@ -302,11 +342,9 @@ export class Panel {
         <div><span>Turnout today</span><b data-dd-turnout>${turnout}% of base</b></div>
         <div><span>Gave up yesterday</span><b data-dd-balked>${Math.round(R.balkedYesterday).toLocaleString()}</b></div>
       </div>
-      <div class="dd-tier">
-        <div class="dd-tier-now"><span>Dock</span><b>${tierName}-class</b></div>
-        ${upgrade}
-      </div>
-      <div class="dd-hint">Each segment now keeps its own reputation — strand commuters and only commuters thin out.</div>`;
+      <div class="dd-slips-title">Slips</div>
+      ${this.slipsHtml(R.slips)}
+      <div class="dd-hint">Each segment keeps its own reputation. A slip's size limits which vessels can dock here.</div>`;
   }
 
   // ---- per-frame -----------------------------------------------------------
@@ -317,6 +355,15 @@ export class Panel {
     this.setText("[data-day]", String(s.day));
     this.setText("[data-clock]", clockStr(s.clock));
     this.setText("[data-rep]", String(Math.round(s.rep)));
+    this.setText("[data-value]", money(s.companyValue));
+
+    // cash warning: turn red and count down to insolvency while in the red
+    const cashEl = document.querySelector<HTMLElement>("[data-cash]");
+    if (cashEl) cashEl.style.color = s.cash < 0 ? "var(--bad)" : "";
+    if (s.gameOver) {
+      this.showGameOver();
+      return;
+    }
 
     for (const id in s.routes) {
       const R = s.routes[id];
@@ -340,10 +387,25 @@ export class Panel {
       if (this.dockKey(this.selectedDock) !== this.detailKey) this.renderDockDetail();
       else this.refreshDockDetail();
     }
-    // keep buy affordability fresh
+    // keep buy affordability fresh (berth / size / cash gating)
     this.buyWrap
       .querySelectorAll<HTMLButtonElement>(".buy-card")
-      .forEach((btn, i) => (btn.disabled = s.cash < CONFIG.vesselClasses[i].cost));
+      .forEach((btn, i) => (btn.disabled = buyBlocker(s, CONFIG.vesselClasses[i].id) !== null));
+  }
+
+  private showGameOver(): void {
+    if (document.getElementById("game-over")) return;
+    const s = this.state;
+    const el = document.createElement("div");
+    el.id = "game-over";
+    el.innerHTML = `
+      <div class="go-card">
+        <div class="go-title">⚓ Insolvent</div>
+        <div class="go-sub">The company ran out of money and folded on day ${s.day}.</div>
+        <div class="go-stat">Final company value <b>${money(s.companyValue)}</b></div>
+        <button class="go-btn" onclick="location.reload()">New game</button>
+      </div>`;
+    document.getElementById("app")!.appendChild(el);
   }
 
   private setText(sel: string, text: string): void {

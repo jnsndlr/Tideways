@@ -6,7 +6,6 @@ import type { RouteDef, SegmentDef, VesselClass } from "./types";
 
 export const CONFIG = {
   startCash: 150_000,
-  maxFleet: 5,
 
   // Time
   gameMinPerSec: 6,
@@ -15,14 +14,21 @@ export const CONFIG = {
   loadMinutes: 10, // dwell at each terminal
   avgOccupancy: 2.0, // people per car
 
-  // Vessel classes (toy-scaled, PNW-flavoured)
+  // Vessel classes (toy-scaled, PNW-flavoured). dailyCost = fixed overhead per
+  // day just to own/crew the hull, charged whether it sails or sits idle.
   vesselClasses: [
-    { id: "po", name: "Passenger Express", short: "Express", peopleCap: 300, carCap: 0, speedFactor: 1.5, fuelPerNm: 12, cost: 55_000 },
-    { id: "hiyu", name: "M/V Hiyu", short: "Hiyu", peopleCap: 200, carCap: 34, speedFactor: 1.0, fuelPerNm: 20, cost: 90_000 },
-    { id: "medium", name: "M/V Issaquah", short: "Issaquah", peopleCap: 500, carCap: 80, speedFactor: 1.0, fuelPerNm: 30, cost: 175_000 },
-    { id: "large", name: "M/V Jumbo", short: "Jumbo", peopleCap: 900, carCap: 150, speedFactor: 0.9, fuelPerNm: 42, cost: 290_000 },
+    { id: "po", name: "Passenger Express", short: "Express", peopleCap: 300, carCap: 0, speedFactor: 1.5, fuelPerNm: 12, cost: 55_000, dailyCost: 600 },
+    { id: "hiyu", name: "M/V Hiyu", short: "Hiyu", peopleCap: 200, carCap: 34, speedFactor: 1.0, fuelPerNm: 20, cost: 90_000, dailyCost: 1_000 },
+    { id: "medium", name: "M/V Issaquah", short: "Issaquah", peopleCap: 500, carCap: 80, speedFactor: 1.0, fuelPerNm: 30, cost: 175_000, dailyCost: 1_800 },
+    { id: "large", name: "M/V Jumbo", short: "Jumbo", peopleCap: 900, carCap: 150, speedFactor: 0.9, fuelPerNm: 42, cost: 290_000, dailyCost: 2_800 },
   ] as VesselClass[],
   startVessel: "hiyu",
+
+  // Economy / solvency
+  economy: {
+    bankruptcyGraceDays: 3, // days you may run cash < 0 before the company folds
+    resaleFactor: 0.5, // share of a hull's cost counted toward company value
+  },
 
   // Pricing (reference fares = starting prices; elasticity measured vs these)
   fare: { foot: 14, car: 30 },
@@ -40,13 +46,18 @@ export const CONFIG = {
   repNeutral: 60,
   repDemand: { atZero: 0.55, atNeutral: 1.0, atFull: 1.2 },
 
-  // Docks — a dock's tier = the largest vessel class (index into vesselClasses)
-  // it can berth. 0 = Express only, 1 = +Hiyu, 2 = +Issaquah, 3 = +Jumbo.
-  docks: {
-    buildCost: 60_000, // build a brand-new dock on a locked island (reaches tier 0)
-    startTier: 1, // islands you start with already berth up to Hiyu
-    // cost to REACH each tier; index = target tier (index 0 is the build cost)
-    upgradeCost: [60_000, 45_000, 110_000, 190_000],
+  // Ports & slips — a port has one or more slips; each slip has a size tier =
+  // the largest vessel class (index into vesselClasses) it can berth.
+  // 0 = Express, 1 = +Hiyu, 2 = +Issaquah, 3 = +Jumbo. A vessel can call at a
+  // port only if some slip there is big enough. At the home port the slip COUNT
+  // is the fleet cap and the biggest slip is the largest vessel you may own.
+  ports: {
+    buildSlipCost: 60_000, // build the first slip on a locked island (tier 0)
+    addSlipCost: 70_000, // ×(current slip count) to add another slip to a port
+    // cost to raise a slip TO tier i (index = target tier; index 0 = build)
+    sizeUpgradeCost: [60_000, 45_000, 110_000, 190_000],
+    islandStartTier: 1, // islands you start with have one Hiyu-capable slip
+    hubStartSlips: [1, 1, 1], // home berths: count = fleet cap, tiers = ownable sizes
   },
 
   // Demand segments — distinct behaviour so levers conflict

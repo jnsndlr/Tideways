@@ -1,6 +1,6 @@
 import "./style.css";
 import { CONFIG } from "./config";
-import { advance, buildDock, buyBoat, createState, upgradeDock } from "./sim";
+import { addSlip, advance, buildDock, buyBoat, createState, upgradeSlip } from "./sim";
 import { MapRenderer } from "./render/canvas";
 import { Panel } from "./ui/panel";
 import { Timeline } from "./ui/timeline";
@@ -31,10 +31,17 @@ const panel = new Panel(state, {
       panel.selectDock(routeId); // re-render detail, now an open dock
     }
   },
-  onUpgradeDock: (routeId) => {
-    if (upgradeDock(state, routeId)) {
-      timeline.rebuild(); // bigger vessels may now be schedulable here
-      panel.selectDock(routeId);
+  onAddSlip: (portId) => {
+    if (addSlip(state, portId)) {
+      panel.buildFleet(); // hub: fleet cap changed
+      panel.selectDock(portId);
+    }
+  },
+  onUpgradeSlip: (portId, slipIdx) => {
+    if (upgradeSlip(state, portId, slipIdx)) {
+      if (portId === "hub") panel.buildFleet(); // bigger vessels now ownable
+      else timeline.rebuild(); // bigger vessels now schedulable to this island
+      panel.selectDock(portId);
     }
   },
 });
@@ -120,7 +127,7 @@ function endPointer(e: PointerEvent): void {
   if (pointers.size < 2) pinchDist = 0;
   if (tap && (e.pointerType !== "mouse" || e.button === 0)) {
     const id = renderer.hitTestTerminal(e.clientX, e.clientY);
-    const next = id && id !== "hub" && panel.selectedDock !== id ? id : null;
+    const next = id && panel.selectedDock !== id ? id : null; // hub opens home-port panel
     panel.selectDock(next);
     renderer.selected = next;
   }

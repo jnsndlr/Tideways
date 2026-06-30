@@ -1,4 +1,4 @@
-import { CONFIG, maxDockTier } from "../config";
+import { CONFIG, maxDockTier, vesselById, vesselRank } from "../config";
 import type { Boat, DirQueue, GameState, RouteState } from "../types";
 
 function newDirQueue(): DirQueue {
@@ -31,8 +31,7 @@ export function createState(): GameState {
       demandRep: CONFIG.repStart,
       footPrice: CONFIG.fare.foot,
       carPrice: CONFIG.fare.car,
-      hasDock: docked,
-      dockTier: docked ? CONFIG.docks.startTier : -1,
+      slips: docked ? [CONFIG.ports.islandStartTier] : [],
     };
   }
 
@@ -46,6 +45,10 @@ export function createState(): GameState {
     boats: [],
     boatCounter: 0,
     tripCounter: 0,
+    hubSlips: [...CONFIG.ports.hubStartSlips],
+    daysInDebt: 0,
+    gameOver: false,
+    companyValue: CONFIG.startCash,
   };
 
   addBoat(state, CONFIG.startVessel);
@@ -70,12 +73,19 @@ export function addBoat(state: GameState, classId: string): Boat {
   return boat;
 }
 
-/** Purchase a vessel of the given class if affordable and under the fleet cap. */
+/** Why a vessel class can't currently be bought, or null if it can. */
+export function buyBlocker(state: GameState, classId: string): "berth" | "size" | "cash" | null {
+  const vc = vesselById(classId);
+  if (state.boats.length >= state.hubSlips.length) return "berth"; // no free home slip
+  if (vesselRank(classId) > portMaxTier(state.hubSlips)) return "size"; // slips too small
+  if (state.cash < vc.cost) return "cash";
+  return null;
+}
+
+/** Purchase a vessel: needs a free home berth, a big-enough home slip, and cash. */
 export function buyBoat(state: GameState, classId: string): Boat | null {
-  if (state.boats.length >= CONFIG.maxFleet) return null;
-  const vc = CONFIG.vesselClasses.find((v) => v.id === classId);
-  if (!vc || state.cash < vc.cost) return null;
-  state.cash -= vc.cost;
+  if (buyBlocker(state, classId) !== null) return null;
+  state.cash -= vesselById(classId).cost;
   return addBoat(state, classId);
 }
 
@@ -90,35 +100,60 @@ export function removeTrip(boat: Boat, tripId: number): void {
   boat.itinerary = boat.itinerary.filter((t) => t.id !== tripId);
 }
 
-// ---- Docks ----------------------------------------------------------------
+// ---- Ports & slips --------------------------------------------------------
 
-/** Cost to take a route from its current dock state to the next tier up.
- *  Returns null when the dock is already at the top tier. */
-export function nextDockCost(R: RouteState): number | null {
-  const target = R.dockTier + 1; // build (-1 -> 0) or upgrade (t -> t+1)
-  if (target > maxDockTier) return null;
-  return CONFIG.docks.upgradeCost[target];
+/** The slip-tier array for a port. portId === "hub" is the home port. */
+export function portSlips(state: GameState, portId: string): number[] {
+  return portId === "hub" ? state.hubSlips : state.routes[portId].slips;
 }
 
-/** Build a dock on a locked island (tier 0). Returns true on success. */
+/** Largest vessel rank a port can berth (-1 if it has no slips). */
+export function portMaxTier(slips: number[]): number {
+  return slips.length ? Math.max(...slips) : -1;
+}
+
+/** Cost to add another slip to a port (rises with each slip already built). */
+export function addSlipCost(slips: number[]): number {
+  return CONFIG.ports.addSlipCost * Math.max(1, slips.length);
+}
+
+/** Cost to upgrade a slip one size tier, or null if already at the top. */
+export function slipUpgradeCost(tier: number): number | null {
+  const target = tier + 1;
+  if (target > maxDockTier) return null;
+  return CONFIG.ports.sizeUpgradeCost[target];
+}
+
+/** Build the first slip on a locked island (tier 0). */
 export function buildDock(state: GameState, routeId: string): boolean {
   const R = state.routes[routeId];
-  if (!R || R.hasDock) return false;
-  const cost = CONFIG.docks.upgradeCost[0];
+  if (!R || R.slips.length) return false;
+  const cost = CONFIG.ports.buildSlipCost;
   if (state.cash < cost) return false;
   state.cash -= cost;
-  R.hasDock = true;
-  R.dockTier = 0;
+  R.slips.push(0);
   return true;
 }
 
-/** Upgrade a dock by one tier (Express -> Hiyu -> Issaquah -> Jumbo). */
-export function upgradeDock(state: GameState, routeId: string): boolean {
-  const R = state.routes[routeId];
-  if (!R || !R.hasDock || R.dockTier >= maxDockTier) return false;
-  const cost = nextDockCost(R);
+/** Add another berth to a port (more simultaneous capacity / fleet cap at hub). */
+export function addSlip(state: GameState, portId: string): boolean {
+  const slips = portSlips(state, portId);
+  if (portId !== "hub" && !slips.length) return false; // build a dock first
+  const cost = addSlipCost(slips);
+  if (state.cash < cost) return false;
+  state.cash -= cost;
+  slips.push(0);
+  return true;
+}
+
+/** Upgrade one slip at a port to the next size tier. */
+export function upgradeSlip(state: GameState, portId: string, idx: number): boolean {
+  const slips = portSlips(state, portId);
+  const tier = slips[idx];
+  if (tier === undefined) return false;
+  const cost = slipUpgradeCost(tier);
   if (cost === null || state.cash < cost) return false;
   state.cash -= cost;
-  R.dockTier += 1;
+  slips[idx] += 1;
   return true;
 }
