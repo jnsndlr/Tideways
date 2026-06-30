@@ -1,5 +1,6 @@
 import { CONFIG, vesselById } from "../config";
-import type { Boat, DirQueue, GameState, RouteState, Vec2 } from "../types";
+import { segWaiting } from "../sim/sim";
+import type { Boat, GameState, Vec2 } from "../types";
 
 export function repColor(rep: number): string {
   if (rep < 40) return "#f0795f";
@@ -96,38 +97,37 @@ export class MapRenderer {
 
   render(state: GameState): void {
     this.drawWater();
-    const hub = this.px(CONFIG.hub.pos);
-    const ids = Object.keys(state.routes);
 
-    // route lines only to islands we actually serve
-    for (const id of ids) {
-      const R = state.routes[id];
-      if (R.slips.length) this.drawRouteLine(hub, this.px(R.def.pos), R.def.color);
+    // route lines for usable legs (both endpoints docked)
+    for (const rid in state.routes) {
+      const R = state.routes[rid].def;
+      const a = state.ports[R.from];
+      const b = state.ports[R.to];
+      if (a.slips.length && b.slips.length)
+        this.drawRouteLine(this.px(a.def.pos), this.px(b.def.pos), R.color);
     }
 
-    // terminals (locked islands draw dimmed with a padlock)
-    for (const id of ids) {
-      const R = state.routes[id];
-      const docked = R.slips.length > 0;
-      const tier = docked ? Math.max(...R.slips) : -1;
+    // terminals: every port (hub included; locked islands dimmed with a padlock)
+    for (const pid in state.ports) {
+      const P = state.ports[pid];
+      const isHub = P.def.isHub === true;
+      const docked = P.slips.length > 0;
+      const tier = docked ? Math.max(...P.slips) : -1;
       this.drawTerminal(
-        this.px(R.def.pos), R.def.name, R.def.color, false,
-        docked ? R.rep : null, this.selected === id, !docked, tier,
+        this.px(P.def.pos), P.def.name, isHub ? "#57b6e0" : P.def.color, isHub,
+        docked ? P.rep : null, this.selected === pid, !docked, tier,
       );
     }
-    this.drawTerminal(hub, CONFIG.hub.name, "#57b6e0", true, null, this.selected === "hub", false, -1);
 
     for (const boat of state.boats) this.drawBoat(state, boat);
 
-    // queues drawn last so segment pips sit above terminals (never obscured)
-    let qi = 0;
-    for (const id of ids) {
-      const R = state.routes[id];
-      if (!R.slips.length) continue;
-      const hubOff: Vec2 = { x: -54 + qi * 50, y: -64 };
-      this.drawSegQueue(hub, hubOff, R.out);
-      this.drawSegQueue(this.px(R.def.pos), { x: -18, y: 26 }, R.in);
-      qi++;
+    // queues drawn last so segment pips sit above terminals (never obscured).
+    // Aggregated per port by segment across all destinations.
+    for (const pid in state.ports) {
+      const P = state.ports[pid];
+      if (!P.slips.length) continue;
+      const off: Vec2 = P.def.isHub ? { x: -54, y: -64 } : { x: -18, y: 26 };
+      this.drawSegQueue(this.px(P.def.pos), off, segWaiting(P));
     }
   }
 
@@ -217,12 +217,11 @@ export class MapRenderer {
   }
 
   // segment-coloured queue: one short column of pips per segment
-  private drawSegQueue(pt: Vec2, off: Vec2, dir: DirQueue): void {
+  private drawSegQueue(pt: Vec2, off: Vec2, byseg: Record<string, number>): void {
     const { ctx } = this;
     let col = 0;
     for (const seg of CONFIG.segments) {
-      const q = dir[seg.id];
-      const people = q.foot + q.car * CONFIG.avgOccupancy;
+      const people = byseg[seg.id] ?? 0;
       const n = Math.min(Math.ceil(people / 14), 12);
       if (n <= 0) continue;
       const ox = pt.x + off.x + col * 7;
@@ -235,27 +234,33 @@ export class MapRenderer {
 
   private drawBoat(state: GameState, boat: Boat): void {
     const vc = vesselById(boat.classId);
-    const hub = this.px(CONFIG.hub.pos);
+    const hubPos = this.px(state.ports[state.hubId].def.pos);
     let pos: Vec2;
     let ang = 0;
 
     if (boat.phase === "idle" || !boat.routeId) {
       // idle boats rest at the hub, fanned out slightly so they're visible
-      pos = { x: hub.x + (boat.id % 2 === 0 ? 24 : -24), y: hub.y + 4 + Math.floor(boat.id / 2) * 6 };
+      pos = { x: hubPos.x + (boat.id % 2 === 0 ? 24 : -24), y: hubPos.y + 4 + Math.floor(boat.id / 2) * 6 };
     } else {
-      const R: RouteState = state.routes[boat.routeId];
-      const dest = this.px(R.def.pos);
-      if (boat.phase === "hub") {
-        pos = hub;
-        ang = Math.atan2(dest.y - hub.y, dest.x - hub.x);
-      } else if (boat.phase === "dest") {
-        pos = dest;
-        ang = Math.atan2(hub.y - dest.y, hub.x - dest.x);
+      const R = state.routes[boat.routeId].def;
+      const home = this.px(state.ports[R.from].def.pos);
+      const far = this.px(state.ports[R.to].def.pos);
+      if (boat.phase === "atHome") {
+        pos = home;
+        ang = Math.atan2(far.y - home.y, far.x - home.x);
+      } else if (boat.phase === "atFar") {
+        pos = far;
+        ang = Math.atan2(home.y - far.y, home.x - far.x);
+      } else if (boat.phase === "hold") {
+        // queued offshore short of the far dock, fanned so a backlog is visible
+        const h = 0.82 - (boat.id % 3) * 0.05;
+        pos = { x: home.x + (far.x - home.x) * h, y: home.y + (far.y - home.y) * h };
+        ang = Math.atan2(far.y - home.y, far.x - home.x);
       } else {
         const p = boat.p;
-        pos = { x: hub.x + (dest.x - hub.x) * p, y: hub.y + (dest.y - hub.y) * p };
+        pos = { x: home.x + (far.x - home.x) * p, y: home.y + (far.y - home.y) * p };
         const dir = boat.phase === "out" ? 1 : -1;
-        ang = Math.atan2((dest.y - hub.y) * dir, (dest.x - hub.x) * dir);
+        ang = Math.atan2((far.y - home.y) * dir, (far.x - home.x) * dir);
       }
     }
 
@@ -302,8 +307,7 @@ export class MapRenderer {
     const x = clientX - rect.left;
     const y = clientY - rect.top;
     const within = (p: Vec2) => Math.hypot(p.x - x, p.y - y) < 34;
-    if (within(this.px(CONFIG.hub.pos))) return "hub";
-    for (const def of CONFIG.routes) if (within(this.px(def.pos))) return def.id;
+    for (const def of CONFIG.ports) if (within(this.px(def.pos))) return def.id;
     return null;
   }
 }

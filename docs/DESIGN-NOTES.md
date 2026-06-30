@@ -4,7 +4,7 @@ Companion to [Ferry-Game-GDD.md](Ferry-Game-GDD.md) (the canonical vision). This
 tracks how the prototype maps to the GDD and records design decisions as we make them.
 Check implementation against the GDD; check *sequencing* against this file.
 
-_Last updated: 2026-06-29_
+_Last updated: 2026-06-30_
 
 ---
 
@@ -90,3 +90,62 @@ Owning more ferries should require capital **and a reason** **and operational su
 
 **Suggested next session:** do #1 and #2 together (they're small and interlocking), then make
 #3 the following milestone.
+
+---
+
+## Interconnected routing (decided 2026-06-30)
+
+The next milestone after the economy spine + slip work. Moves beyond hub-and-spoke (every
+island ↔ Anacortes only) to a connected interisland network where passengers travel
+island→island.
+
+### Core insight
+**Point-to-point legs + transfers** make the hub (Anacortes) an interchange, so the
+*existing* hub↔island routes already connect island→island via a hub transfer. The
+interconnected payoff comes from a **routing layer**, not from forcing players to build an
+O(n²) mesh of direct routes. Direct interisland routes become an *optimization* (shorter
+trip, less hub congestion), not a prerequisite.
+
+### Agreed decisions
+| Topic | Decision |
+| --- | --- |
+| Carrying model | Point-to-point first: generalize a route from hub↔island to **any-port↔any-port**. Multi-stop "lines" deferred. |
+| Demand | **Gravity model**: per-port population + tourist-draw weights; `demand(A→B) ∝ pop(A)·draw(B)·distanceDecay`, hub-dominant, shaped by the existing time-of-day segment curves. Foundation for the later living-economy phase. |
+| Transfers | **Yes** — passengers ride across multiple sailings (A→hub→B). |
+| Routing | **Shortest path** over the route graph; `nextHop(from, finalDest)` recomputed only when routes change. Congestion-blind in v1 (riders pick shortest path, not emptiest boat). |
+| Fares | **Per boarded leg.** |
+| Transfer wait clock | **Reset per leg** for now (each leg's patience starts fresh at the transfer port). |
+
+### Future research hook (not v1)
+A per-rider **spend limit**: multi-leg journeys that cost too much go unserved. Surface as an
+opportunity prompt — e.g. "~500 daily riders aren't traveling because the legs are too
+expensive; a direct route would capture them" — that justifies (and is unlocked by
+researching) a new direct route.
+
+### Phased build order
+1. **Network spine (model + engine, no new UI).** The big phase.
+   - Ports become first-class; hub and every island are ports.
+   - O/D queues live at ports, keyed by **(final destination, segment)** — replaces route
+     `out`/`in`.
+   - A route becomes a **physical leg** between two ports; generalize the boat phase machine
+     so the origin is any port, not hardcoded Anacortes.
+   - Routing table: `nextHop(from, finalDest)` via shortest path (metric: fewest transfers,
+     then total crossing time).
+   - Loading: a boat sailing P→Q boards passengers at P whose next hop toward their final
+     destination is Q (same proportional/cap logic as today's `loadBoat`).
+   - Arrival at Q: deliver finalDest==Q (fare + reputation); re-enqueue the rest into Q's
+     queue toward their destination.
+   - Gravity demand generator fills origin queues.
+   - *End state:* the current hub↔island network already carries island→island traffic via
+     hub transfers; hub slip contention starts to bite.
+2. **Direct interisland routes (player tool + UI).** Open a route between any two ports; dock
+   requirements at both ends; route-opening cost. Sim already supports it from Phase 1.
+3. **Network legibility UI.** Per-port unmet demand by destination, hub transfer volume,
+   underserved-pair hints. Makes transfers visible/playable.
+4. **(future) Multi-stop lines.** Chain stops into one sailing, resting on the O/D + transfer
+   foundation.
+
+### Ties to existing systems
+Multiple routes calling at the same port makes per-port **slip count** mechanically
+meaningful (berth contention) — the slip rework laid this groundwork. Hub contention bites as
+soon as Phase 1 lands.

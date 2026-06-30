@@ -1,14 +1,15 @@
 import { CONFIG, vesselById } from "../config";
-import type { GameState, RouteState, SegmentDef } from "../types";
+import type { GameState, PortState, SegmentDef } from "../types";
 import { accrueDemand } from "./demand";
 import { stepBoat } from "./ferry";
 
-/** Per-segment balking: once a queue waits past that segment's patience,
- *  a trickle gives up and the dock's reputation sours. */
-function updateRouteQueues(state: GameState, R: RouteState, dtMin: number): void {
-  for (const dir of [R.out, R.in]) {
+/** Per-segment balking: once a queue waits past that segment's patience, a
+ *  trickle gives up and the origin port's reputation sours. */
+function updatePortQueues(state: GameState, P: PortState, dtMin: number): void {
+  for (const dest in P.queues) {
     for (const seg of CONFIG.segments) {
-      const q = dir[seg.id];
+      const q = P.queues[dest][seg.id];
+      if (!q) continue;
       const people = q.foot + q.car * CONFIG.avgOccupancy;
       if (people > 0.5) q.wait += dtMin;
       else {
@@ -22,9 +23,8 @@ function updateRouteQueues(state: GameState, R: RouteState, dtMin: number): void
         q.foot -= bFoot;
         q.car -= bCar;
         const lost = bFoot + bCar * CONFIG.avgOccupancy;
-        R.balkedToday += lost;
-        // stranding this segment sours *its* reputation specifically
-        R.segRep[seg.id] -= lost * CONFIG.repBalkLoss;
+        P.balkedToday += lost;
+        P.segRep[seg.id] -= lost * CONFIG.repBalkLoss;
       }
     }
   }
@@ -36,20 +36,20 @@ export function step(state: GameState, dtMin: number): void {
   if (state.clock >= 1440) {
     state.clock -= 1440;
     state.day++;
-    for (const id in state.routes) {
-      const R = state.routes[id];
+    for (const id in state.ports) {
+      const P = state.ports[id];
       for (const seg of CONFIG.segments) {
-        const sr = R.segRep[seg.id];
+        const sr = P.segRep[seg.id];
         const drift = sr > CONFIG.repNeutral ? CONFIG.repDriftDown : CONFIG.repDriftUp;
         const next = sr + (CONFIG.repNeutral - sr) * drift;
-        R.segRep[seg.id] = Math.max(0, Math.min(100, next));
-        R.segDemandRep[seg.id] = R.segRep[seg.id]; // yesterday's service shapes today
+        P.segRep[seg.id] = Math.max(0, Math.min(100, next));
+        P.segDemandRep[seg.id] = P.segRep[seg.id]; // yesterday's service shapes today
       }
-      R.balkedYesterday = R.balkedToday;
-      R.servedToday = 0;
-      R.balkedToday = 0;
-      R.sailingsToday = 0;
+      P.balkedYesterday = P.balkedToday;
+      P.servedToday = 0;
+      P.balkedToday = 0;
     }
+    for (const id in state.routes) state.routes[id].sailingsToday = 0;
 
     // fleet upkeep: every hull costs its daily overhead, sailing or idle
     let upkeep = 0;
@@ -63,33 +63,34 @@ export function step(state: GameState, dtMin: number): void {
     // new day: every boat restarts its daily itinerary
     for (const b of state.boats) {
       b.nextTripIdx = 0;
-      if (b.phase !== "out" && b.phase !== "back" && b.phase !== "dest") {
+      if (b.phase !== "out" && b.phase !== "back" && b.phase !== "atFar") {
         b.phase = "idle";
         b.routeId = null;
+        b.atPort = null;
       }
     }
   }
 
   accrueDemand(state, dtMin);
-  for (const id in state.routes) updateRouteQueues(state, state.routes[id], dtMin);
+  for (const id in state.ports) updatePortQueues(state, state.ports[id], dtMin);
   for (const boat of state.boats) stepBoat(state, boat, dtMin);
 
   let sum = 0;
   let n = 0;
-  for (const id in state.routes) {
-    const R = state.routes[id];
-    // clamp each segment and derive the route-average rep for display
+  for (const id in state.ports) {
+    const P = state.ports[id];
+    // clamp each segment and derive the port-average rep for display
     let rSum = 0;
     for (const seg of CONFIG.segments) {
-      R.segRep[seg.id] = Math.max(0, Math.min(100, R.segRep[seg.id]));
-      rSum += R.segRep[seg.id];
+      P.segRep[seg.id] = Math.max(0, Math.min(100, P.segRep[seg.id]));
+      rSum += P.segRep[seg.id];
     }
-    R.rep = rSum / CONFIG.segments.length;
-    R.demandRep =
-      CONFIG.segments.reduce((a, seg) => a + R.segDemandRep[seg.id], 0) /
+    P.rep = rSum / CONFIG.segments.length;
+    P.demandRep =
+      CONFIG.segments.reduce((a, seg) => a + P.segDemandRep[seg.id], 0) /
       CONFIG.segments.length;
-    if (!R.slips.length) continue; // locked islands don't count toward fleet rep
-    sum += R.rep;
+    if (!P.slips.length) continue; // locked ports don't count toward fleet rep
+    sum += P.rep;
     n++;
   }
   state.rep = n ? sum / n : CONFIG.repNeutral;
@@ -107,31 +108,37 @@ export function advance(state: GameState, dtMin: number): void {
   for (let i = 0; i < steps; i++) step(state, dtMin / steps);
 }
 
-// queue helpers used by the UI
-export function waitingPeople(R: RouteState, segId?: string): number {
+// ---- queue helpers used by the UI -----------------------------------------
+
+/** People waiting at a port (optionally filtered to one segment), across all
+ *  destinations. */
+export function waitingPeople(P: PortState, segId?: string): number {
   let p = 0;
-  for (const dir of [R.out, R.in]) {
+  for (const dest in P.queues)
     for (const seg of CONFIG.segments) {
       if (segId && seg.id !== segId) continue;
-      p += dir[seg.id].foot + dir[seg.id].car * CONFIG.avgOccupancy;
+      const q = P.queues[dest][seg.id];
+      if (q) p += q.foot + q.car * CONFIG.avgOccupancy;
     }
-  }
   return p;
 }
 
-export function estDailyPeople(R: RouteState, segId?: string): number {
+/** People waiting at a port bound for a specific destination. */
+export function waitingFor(P: PortState, destId: string, segId?: string): number {
+  const dq = P.queues[destId];
+  if (!dq) return 0;
   let p = 0;
   for (const seg of CONFIG.segments) {
     if (segId && seg.id !== segId) continue;
-    const d = R.def.demand[seg.id];
-    if (d) p += d.foot + d.car * CONFIG.avgOccupancy;
+    const q = dq[seg.id];
+    if (q) p += q.foot + q.car * CONFIG.avgOccupancy;
   }
   return p;
 }
 
-export function segWaiting(R: RouteState): Record<string, number> {
+export function segWaiting(P: PortState): Record<string, number> {
   const out: Record<string, number> = {};
-  for (const seg of CONFIG.segments) out[seg.id] = waitingPeople(R, seg.id);
+  for (const seg of CONFIG.segments) out[seg.id] = waitingPeople(P, seg.id);
   return out;
 }
 
