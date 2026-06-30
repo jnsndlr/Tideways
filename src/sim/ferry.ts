@@ -28,16 +28,15 @@ export function loadBoat(state: GameState, boat: Boat, dir: DirQueue, R: RouteSt
   const footRoom = Math.max(0, vc.peopleCap - peopleFromCars);
   const footLoaded = Math.min(Math.floor(totalFoot), footRoom);
 
-  if (totalCar > 0 && carsLoaded > 0) {
-    const frac = carsLoaded / totalCar;
-    for (const seg of CONFIG.segments) dir[seg.id].car -= dir[seg.id].car * frac;
-  }
-  if (totalFoot > 0 && footLoaded > 0) {
-    const frac = footLoaded / totalFoot;
-    for (const seg of CONFIG.segments) dir[seg.id].foot -= dir[seg.id].foot * frac;
-  }
+  const carFrac = totalCar > 0 ? carsLoaded / totalCar : 0;
+  const footFrac = totalFoot > 0 ? footLoaded / totalFoot : 0;
   for (const seg of CONFIG.segments) {
     const q = dir[seg.id];
+    // people of this segment carried this sailing -> credit its own reputation
+    const segServed = q.foot * footFrac + q.car * carFrac * occ;
+    R.segRep[seg.id] += segServed * CONFIG.repServedGain;
+    q.car -= q.car * carFrac;
+    q.foot -= q.foot * footFrac;
     if (q.foot < 0.5 && q.car < 0.5) q.wait = 0;
   }
 
@@ -45,9 +44,7 @@ export function loadBoat(state: GameState, boat: Boat, dir: DirQueue, R: RouteSt
   boat.pax.car = carsLoaded;
 
   state.cash += carsLoaded * R.carPrice + footLoaded * R.footPrice;
-  const served = footLoaded + peopleFromCars;
-  R.servedToday += served;
-  R.rep += served * CONFIG.repServedGain;
+  R.servedToday += footLoaded + peopleFromCars;
 }
 
 export function chargeFuel(state: GameState, boat: Boat, R: RouteState): void {

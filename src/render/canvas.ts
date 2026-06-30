@@ -14,12 +14,25 @@ export class MapRenderer {
   private dpr = 1;
   selected: string | null = null;
 
+  // Camera: the world is a unit square [0,1]². (cx,cy) is the world point
+  // sitting at the screen centre; zoom multiplies a uniform fit scale so the
+  // map never squishes regardless of the canvas aspect ratio.
+  private cam = { cx: 0.5, cy: 0.5, zoom: 1 };
+  private static MIN_ZOOM = 0.6;
+  private static MAX_ZOOM = 6;
+
   constructor(private canvas: HTMLCanvasElement) {
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("2d context unavailable");
     this.ctx = ctx;
     this.resize();
     window.addEventListener("resize", () => this.resize());
+    // the map container changes size as the panel fills in / scrolls; track it
+    // so positions and hit-testing stay aligned with what's drawn.
+    const wrap = canvas.parentElement;
+    if (wrap && "ResizeObserver" in window) {
+      new ResizeObserver(() => this.resize()).observe(wrap);
+    }
   }
 
   resize(): void {
@@ -32,36 +45,88 @@ export class MapRenderer {
     this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
   }
 
+  /** Uniform world->screen scale (px per world unit) at the current zoom. */
+  private scale(): number {
+    return Math.min(this.W, this.H) * 0.86 * this.cam.zoom;
+  }
+
   private px(pt: Vec2): Vec2 {
-    return { x: pt.x * this.W, y: pt.y * this.H };
+    const s = this.scale();
+    return {
+      x: this.W / 2 + (pt.x - this.cam.cx) * s,
+      y: this.H / 2 + (pt.y - this.cam.cy) * s,
+    };
+  }
+
+  private screenToWorld(sx: number, sy: number): Vec2 {
+    const s = this.scale();
+    return {
+      x: (sx - this.W / 2) / s + this.cam.cx,
+      y: (sy - this.H / 2) / s + this.cam.cy,
+    };
+  }
+
+  // ---- camera controls (driven from main.ts pointer/wheel handlers) --------
+
+  /** Drag the map by a screen-space delta (right-drag / swipe). */
+  panBy(dxPx: number, dyPx: number): void {
+    const s = this.scale();
+    this.cam.cx -= dxPx / s;
+    this.cam.cy -= dyPx / s;
+    this.clampCam();
+  }
+
+  /** Zoom by `factor` about a screen point, keeping that point fixed. */
+  zoomAt(sx: number, sy: number, factor: number): void {
+    const before = this.screenToWorld(sx, sy);
+    this.cam.zoom = Math.max(
+      MapRenderer.MIN_ZOOM,
+      Math.min(MapRenderer.MAX_ZOOM, this.cam.zoom * factor),
+    );
+    const after = this.screenToWorld(sx, sy);
+    this.cam.cx += before.x - after.x;
+    this.cam.cy += before.y - after.y;
+    this.clampCam();
+  }
+
+  private clampCam(): void {
+    this.cam.cx = Math.max(-0.25, Math.min(1.25, this.cam.cx));
+    this.cam.cy = Math.max(-0.25, Math.min(1.25, this.cam.cy));
   }
 
   render(state: GameState): void {
     this.drawWater();
     const hub = this.px(CONFIG.hub.pos);
-
-    for (const id in state.routes) {
-      this.drawRouteLine(hub, this.px(state.routes[id].def.pos), state.routes[id].def.color);
-    }
-
-    // queues: per-route outbound near hub, inbound at the destination
-    let qi = 0;
     const ids = Object.keys(state.routes);
+
+    // route lines only to islands we actually serve
     for (const id of ids) {
       const R = state.routes[id];
+      if (R.hasDock) this.drawRouteLine(hub, this.px(R.def.pos), R.def.color);
+    }
+
+    // terminals (locked islands draw dimmed with a padlock)
+    for (const id of ids) {
+      const R = state.routes[id];
+      this.drawTerminal(
+        this.px(R.def.pos), R.def.name, R.def.color, false,
+        R.hasDock ? R.rep : null, this.selected === id, !R.hasDock, R.dockTier,
+      );
+    }
+    this.drawTerminal(hub, CONFIG.hub.name, "#57b6e0", true, null, this.selected === "hub", false, -1);
+
+    for (const boat of state.boats) this.drawBoat(state, boat);
+
+    // queues drawn last so segment pips sit above terminals (never obscured)
+    let qi = 0;
+    for (const id of ids) {
+      const R = state.routes[id];
+      if (!R.hasDock) continue;
       const hubOff: Vec2 = { x: -54 + qi * 50, y: -64 };
       this.drawSegQueue(hub, hubOff, R.out);
       this.drawSegQueue(this.px(R.def.pos), { x: -18, y: 26 }, R.in);
       qi++;
     }
-
-    for (const id of ids) {
-      const R = state.routes[id];
-      this.drawTerminal(this.px(R.def.pos), R.def.name, R.def.color, false, R.rep, this.selected === id);
-    }
-    this.drawTerminal(hub, CONFIG.hub.name, "#57b6e0", true, null, this.selected === "hub");
-
-    for (const boat of state.boats) this.drawBoat(state, boat);
   }
 
   private drawWater(): void {
@@ -84,10 +149,12 @@ export class MapRenderer {
 
   private drawTerminal(
     pt: Vec2, label: string, color: string, big: boolean,
-    rep: number | null, selected: boolean,
+    rep: number | null, selected: boolean, locked: boolean, dockTier: number,
   ): void {
     const { ctx } = this;
     const r = big ? 16 : 13;
+    ctx.save();
+    if (locked) ctx.globalAlpha = 0.6;
     if (selected) {
       ctx.strokeStyle = "#eaf3f8";
       ctx.lineWidth = 2;
@@ -95,15 +162,15 @@ export class MapRenderer {
       ctx.arc(pt.x, pt.y, r + 22, 0, Math.PI * 2);
       ctx.stroke();
     }
-    ctx.fillStyle = "#43734f";
+    ctx.fillStyle = locked ? "#3a4a52" : "#43734f";
     ctx.beginPath();
     ctx.ellipse(pt.x, pt.y, r + 18, r + 13, 0, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = "#4f8059";
+    ctx.fillStyle = locked ? "#46585f" : "#4f8059";
     ctx.beginPath();
     ctx.ellipse(pt.x, pt.y, r + 10, r + 7, 0, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = color;
+    ctx.fillStyle = locked ? "#6b7d84" : color;
     ctx.beginPath();
     ctx.arc(pt.x, pt.y, r * 0.45, 0, Math.PI * 2);
     ctx.fill();
@@ -114,7 +181,11 @@ export class MapRenderer {
     ctx.font = "700 12px -apple-system, sans-serif";
     ctx.textAlign = "center";
     ctx.fillText(label, pt.x, pt.y + r + 28);
-    if (rep !== null) {
+
+    if (locked) {
+      ctx.font = "10px -apple-system, sans-serif";
+      ctx.fillText("🔒", pt.x, pt.y + 3);
+    } else if (rep !== null) {
       const bw = 40;
       const bx = pt.x - bw / 2;
       const by = pt.y + r + 34;
@@ -122,7 +193,13 @@ export class MapRenderer {
       ctx.fillRect(bx, by, bw, 4);
       ctx.fillStyle = repColor(rep);
       ctx.fillRect(bx, by, (bw * rep) / 100, 4);
+      // tier pips: how big a vessel this dock can berth
+      for (let i = 0; i <= dockTier; i++) {
+        ctx.fillStyle = "#eaf3f8";
+        ctx.fillRect(bx + i * 5, by + 6, 3, 3);
+      }
     }
+    ctx.restore();
   }
 
   private drawRouteLine(a: Vec2, b: Vec2, color: string): void {

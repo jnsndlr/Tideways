@@ -23,7 +23,8 @@ function updateRouteQueues(state: GameState, R: RouteState, dtMin: number): void
         q.car -= bCar;
         const lost = bFoot + bCar * CONFIG.avgOccupancy;
         R.balkedToday += lost;
-        R.rep -= lost * CONFIG.repBalkLoss;
+        // stranding this segment sours *its* reputation specifically
+        R.segRep[seg.id] -= lost * CONFIG.repBalkLoss;
       }
     }
   }
@@ -37,10 +38,13 @@ export function step(state: GameState, dtMin: number): void {
     state.day++;
     for (const id in state.routes) {
       const R = state.routes[id];
-      const drift = R.rep > CONFIG.repNeutral ? CONFIG.repDriftDown : CONFIG.repDriftUp;
-      R.rep += (CONFIG.repNeutral - R.rep) * drift;
-      R.rep = Math.max(0, Math.min(100, R.rep));
-      R.demandRep = R.rep;
+      for (const seg of CONFIG.segments) {
+        const sr = R.segRep[seg.id];
+        const drift = sr > CONFIG.repNeutral ? CONFIG.repDriftDown : CONFIG.repDriftUp;
+        const next = sr + (CONFIG.repNeutral - sr) * drift;
+        R.segRep[seg.id] = Math.max(0, Math.min(100, next));
+        R.segDemandRep[seg.id] = R.segRep[seg.id]; // yesterday's service shapes today
+      }
       R.balkedYesterday = R.balkedToday;
       R.servedToday = 0;
       R.balkedToday = 0;
@@ -64,7 +68,17 @@ export function step(state: GameState, dtMin: number): void {
   let n = 0;
   for (const id in state.routes) {
     const R = state.routes[id];
-    R.rep = Math.max(0, Math.min(100, R.rep));
+    // clamp each segment and derive the route-average rep for display
+    let rSum = 0;
+    for (const seg of CONFIG.segments) {
+      R.segRep[seg.id] = Math.max(0, Math.min(100, R.segRep[seg.id]));
+      rSum += R.segRep[seg.id];
+    }
+    R.rep = rSum / CONFIG.segments.length;
+    R.demandRep =
+      CONFIG.segments.reduce((a, seg) => a + R.segDemandRep[seg.id], 0) /
+      CONFIG.segments.length;
+    if (!R.hasDock) continue; // locked islands don't count toward fleet rep
     sum += R.rep;
     n++;
   }

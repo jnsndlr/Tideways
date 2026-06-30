@@ -1,4 +1,4 @@
-import { CONFIG, vesselById } from "../config";
+import { CONFIG, vesselById, vesselRank } from "../config";
 import {
   addTrip,
   hasOverlap,
@@ -51,13 +51,15 @@ export class Timeline {
     hint.className = "tl-hint";
     hint.textContent = "Drag a route onto a ferry's lane →";
     pal.appendChild(hint);
-    for (const def of CONFIG.routes) {
+    for (const id in this.state.routes) {
+      const R = this.state.routes[id];
+      if (!R.hasDock) continue; // can't schedule sailings to a locked island
       const chip = document.createElement("button");
       chip.className = "tl-chip";
-      chip.style.background = def.color;
-      chip.textContent = def.name;
+      chip.style.background = R.def.color;
+      chip.textContent = R.def.name;
       chip.addEventListener("pointerdown", (e) =>
-        this.startDrag(e, { kind: "new", routeId: def.id }),
+        this.startDrag(e, { kind: "new", routeId: R.def.id }),
       );
       pal.appendChild(chip);
     }
@@ -187,7 +189,10 @@ export class Timeline {
     this.drag = null;
 
     const hit = this.laneAt(e.clientX, e.clientY - 0);
-    if (hit) {
+    // a boat can only call at a dock big enough to berth it
+    const fitsDock =
+      hit && vesselRank(hit.boat.classId) <= this.state.routes[drag.routeId].dockTier;
+    if (hit && fitsDock) {
       const dur = tripDuration(this.state.routes[drag.routeId], hit.boat.classId);
       const desired = START + ((e.clientX - drag.grabDx - hit.rect.left) / hit.rect.width) * SPAN;
       const slot = this.findFree(

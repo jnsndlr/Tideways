@@ -40,6 +40,15 @@ export const CONFIG = {
   repNeutral: 60,
   repDemand: { atZero: 0.55, atNeutral: 1.0, atFull: 1.2 },
 
+  // Docks — a dock's tier = the largest vessel class (index into vesselClasses)
+  // it can berth. 0 = Express only, 1 = +Hiyu, 2 = +Issaquah, 3 = +Jumbo.
+  docks: {
+    buildCost: 60_000, // build a brand-new dock on a locked island (reaches tier 0)
+    startTier: 1, // islands you start with already berth up to Hiyu
+    // cost to REACH each tier; index = target tier (index 0 is the build cost)
+    upgradeCost: [60_000, 45_000, 110_000, 190_000],
+  },
+
   // Demand segments — distinct behaviour so levers conflict
   segments: [
     {
@@ -65,8 +74,9 @@ export const CONFIG = {
   hub: { name: "Anacortes", pos: { x: 0.5, y: 0.9 } },
 
   routes: [
+    // --- islands you start with (docks already built, Hiyu-capable) ---
     {
-      id: "lopez", name: "Lopez Island", color: "#5bd49a",
+      id: "lopez", name: "Lopez Island", color: "#5bd49a", startDocked: true,
       distanceNm: 8, crossingMin: 25, pos: { x: 0.16, y: 0.32 },
       demand: {
         commuter: { foot: 900, car: 240 },
@@ -75,7 +85,7 @@ export const CONFIG = {
       },
     },
     {
-      id: "orcas", name: "Orcas Island", color: "#b98cdb",
+      id: "orcas", name: "Orcas Island", color: "#b98cdb", startDocked: true,
       distanceNm: 13, crossingMin: 40, pos: { x: 0.5, y: 0.14 },
       demand: {
         commuter: { foot: 500, car: 160 },
@@ -84,12 +94,104 @@ export const CONFIG = {
       },
     },
     {
-      id: "friday", name: "Friday Harbor", color: "#f6a96b",
+      id: "friday", name: "Friday Harbor", color: "#f6a96b", startDocked: true,
       distanceNm: 16, crossingMin: 48, pos: { x: 0.85, y: 0.32 },
       demand: {
         commuter: { foot: 600, car: 180 },
         tourist: { foot: 1600, car: 380 },
         freight: { foot: 0, car: 110 },
+      },
+    },
+
+    // --- fictional islands (locked: build a dock to open them) ---
+    {
+      id: "dovetail", name: "Dovetail", color: "#7fd1c8",
+      distanceNm: 6, crossingMin: 20, pos: { x: 0.38, y: 0.30 },
+      demand: {
+        commuter: { foot: 700, car: 200 },
+        tourist: { foot: 300, car: 90 },
+        freight: { foot: 0, car: 70 },
+      },
+    },
+    {
+      id: "cinderholm", name: "Cinder Holm", color: "#d98fb0",
+      distanceNm: 11, crossingMin: 34, pos: { x: 0.62, y: 0.30 },
+      demand: {
+        commuter: { foot: 450, car: 150 },
+        tourist: { foot: 900, car: 240 },
+        freight: { foot: 0, car: 120 },
+      },
+    },
+    {
+      id: "marrowcay", name: "Marrow Cay", color: "#a8c66c",
+      distanceNm: 9, crossingMin: 28, pos: { x: 0.30, y: 0.54 },
+      demand: {
+        commuter: { foot: 800, car: 220 },
+        tourist: { foot: 350, car: 100 },
+        freight: { foot: 0, car: 80 },
+      },
+    },
+    {
+      id: "thorngate", name: "Thorngate", color: "#e0a35e",
+      distanceNm: 12, crossingMin: 36, pos: { x: 0.70, y: 0.54 },
+      demand: {
+        commuter: { foot: 520, car: 170 },
+        tourist: { foot: 700, car: 190 },
+        freight: { foot: 0, car: 140 },
+      },
+    },
+    {
+      id: "saltcross", name: "Saltcross", color: "#6fb6e0",
+      distanceNm: 14, crossingMin: 42, pos: { x: 0.10, y: 0.60 },
+      demand: {
+        commuter: { foot: 380, car: 120 },
+        tourist: { foot: 1300, car: 330 },
+        freight: { foot: 0, car: 60 },
+      },
+    },
+    {
+      id: "willowreach", name: "Willow Reach", color: "#c9a0e8",
+      distanceNm: 15, crossingMin: 46, pos: { x: 0.90, y: 0.58 },
+      demand: {
+        commuter: { foot: 420, car: 130 },
+        tourist: { foot: 1500, car: 360 },
+        freight: { foot: 0, car: 90 },
+      },
+    },
+    {
+      id: "gullspit", name: "Gull Spit", color: "#e8d36f",
+      distanceNm: 18, crossingMin: 52, pos: { x: 0.24, y: 0.07 },
+      demand: {
+        commuter: { foot: 300, car: 90 },
+        tourist: { foot: 1800, car: 420 },
+        freight: { foot: 0, car: 70 },
+      },
+    },
+    {
+      id: "halerock", name: "Hale Rock", color: "#e07f7f",
+      distanceNm: 20, crossingMin: 58, pos: { x: 0.76, y: 0.06 },
+      demand: {
+        commuter: { foot: 260, car: 80 },
+        tourist: { foot: 1400, car: 320 },
+        freight: { foot: 0, car: 200 },
+      },
+    },
+    {
+      id: "fenharbor", name: "Fen Harbor", color: "#8ad6a0",
+      distanceNm: 10, crossingMin: 30, pos: { x: 0.05, y: 0.42 },
+      demand: {
+        commuter: { foot: 650, car: 190 },
+        tourist: { foot: 500, car: 140 },
+        freight: { foot: 0, car: 110 },
+      },
+    },
+    {
+      id: "blacktern", name: "Black Tern", color: "#9fb0c4",
+      distanceNm: 22, crossingMin: 64, pos: { x: 0.95, y: 0.40 },
+      demand: {
+        commuter: { foot: 220, car: 70 },
+        tourist: { foot: 2000, car: 480 },
+        freight: { foot: 0, car: 150 },
       },
     },
   ] as RouteDef[],
@@ -99,3 +201,10 @@ export type Config = typeof CONFIG;
 
 export const vesselById = (id: string): VesselClass =>
   CONFIG.vesselClasses.find((v) => v.id === id)!;
+
+// A vessel's berth rank = its index in vesselClasses (0 = Express … 3 = Jumbo).
+// A dock of tier T can berth any vessel whose rank <= T.
+export const vesselRank = (id: string): number =>
+  CONFIG.vesselClasses.findIndex((v) => v.id === id);
+
+export const maxDockTier = CONFIG.vesselClasses.length - 1;

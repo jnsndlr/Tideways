@@ -38,6 +38,7 @@ export interface RouteDef {
   crossingMin: number; // base one-way crossing at speedFactor 1.0
   pos: Vec2;
   demand: Record<string, { foot: number; car: number }>; // by segment id
+  startDocked?: boolean; // islands you begin the game already serving
 }
 
 // ---- Runtime state --------------------------------------------------------
@@ -58,10 +59,14 @@ export interface RouteState {
   balkedToday: number;
   balkedYesterday: number;
   sailingsToday: number;
-  rep: number; // per-community reputation 0..100
-  demandRep: number; // reputation snapshot driving today's turnout
+  segRep: Record<string, number>; // per-segment reputation 0..100
+  segDemandRep: Record<string, number>; // per-segment snapshot driving today's turnout
+  rep: number; // route-average reputation (derived; for HUD + map marker)
+  demandRep: number; // route-average snapshot (derived; for summaries)
   footPrice: number;
   carPrice: number;
+  hasDock: boolean; // false = locked island; build a dock to open it
+  dockTier: number; // largest vessel rank this dock can berth (-1 = no dock)
 }
 
 export interface Trip {

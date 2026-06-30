@@ -1,6 +1,7 @@
-import { CONFIG, vesselById } from "../config";
+import { CONFIG, maxDockTier, vesselById } from "../config";
 import {
   estDailyPeople,
+  nextDockCost,
   repFactor,
   segWaiting,
   waitingPeople,
@@ -18,6 +19,8 @@ export interface PanelCallbacks {
   onSetPrice: (routeId: string, kind: "foot" | "car", price: number) => void;
   onBuy: (classId: string) => void;
   onSpeed: (speed: number) => void;
+  onBuildDock: (routeId: string) => void;
+  onUpgradeDock: (routeId: string) => void;
 }
 
 export class Panel {
@@ -25,6 +28,7 @@ export class Panel {
   private fleetEl = document.getElementById("fleet")!;
   private buyWrap = document.getElementById("buy-wrap")!;
   private detailEl: HTMLElement;
+  private detailKey: string | null = null; // structural signature of what's rendered
   selectedDock: string | null = null;
 
   constructor(private state: GameState, private cb: PanelCallbacks) {
@@ -53,6 +57,7 @@ export class Panel {
     this.routesEl.innerHTML = "";
     for (const id in this.state.routes) {
       const R = this.state.routes[id];
+      if (!R.hasDock) continue; // locked islands aren't in the route list yet
       const card = document.createElement("div");
       card.className = "route-card";
       card.innerHTML = `
@@ -169,39 +174,139 @@ export class Panel {
     this.renderDockDetail();
   }
 
+  private dockKey(id: string): string {
+    const R = this.state.routes[id];
+    return `${id}|${R.hasDock}|${R.dockTier}`;
+  }
+
+  /** Rebuild the detail structure. Called only when the panel changes shape
+   *  (selection / build / upgrade) — NOT every frame, so the buttons survive
+   *  long enough to be clicked. Live numbers are patched by refreshDockDetail. */
   private renderDockDetail(): void {
     const id = this.selectedDock;
     if (!id) {
       this.detailEl.hidden = true;
+      this.detailKey = null;
       return;
     }
     const R = this.state.routes[id];
-    const sw = segWaiting(R);
-    const turnout = Math.round(repFactor(R.demandRep) * 100);
     this.detailEl.hidden = false;
-    this.detailEl.innerHTML = `
+    this.detailEl.innerHTML = R.hasDock ? this.openDockHtml(R) : this.lockedDockHtml(R);
+    this.detailEl.querySelector(".dd-close")!.addEventListener("click", () => this.selectDock(null));
+    this.detailEl
+      .querySelector(".dd-build")
+      ?.addEventListener("click", () => this.cb.onBuildDock(id));
+    this.detailEl
+      .querySelector(".dd-upgrade")
+      ?.addEventListener("click", () => this.cb.onUpgradeDock(id));
+    this.detailKey = this.dockKey(id);
+  }
+
+  /** Per-frame: patch the live values in place without touching the buttons. */
+  private refreshDockDetail(): void {
+    const id = this.selectedDock;
+    if (!id) return;
+    const R = this.state.routes[id];
+
+    if (!R.hasDock) {
+      const cost = nextDockCost(R) ?? 0;
+      const b = this.detailEl.querySelector<HTMLButtonElement>(".dd-build");
+      if (b) b.disabled = this.state.cash < cost;
+      return;
+    }
+
+    const sw = segWaiting(R);
+    for (const g of CONFIG.segments) {
+      const sr = R.segRep[g.id];
+      const bar = this.detailEl.querySelector<HTMLElement>(`[data-segrepbar="${g.id}"]`);
+      if (bar) {
+        bar.style.width = sr + "%";
+        bar.style.background = repColor(sr);
+      }
+      this.setIn(`[data-segrep="${g.id}"]`, String(Math.round(sr)));
+      this.setIn(`[data-segwait="${g.id}"]`, Math.round(sw[g.id]) + " waiting");
+    }
+    const head = this.detailEl.querySelector<HTMLElement>("[data-dd-rep]");
+    if (head) {
+      head.textContent = `${Math.round(R.rep)} · ${repLabel(R.rep)}`;
+      head.style.color = repColor(R.rep);
+    }
+    this.setIn("[data-dd-turnout]", Math.round(repFactor(R.demandRep) * 100) + "% of base");
+    this.setIn("[data-dd-balked]", Math.round(R.balkedYesterday).toLocaleString());
+    const up = this.detailEl.querySelector<HTMLButtonElement>(".dd-upgrade");
+    const cost = nextDockCost(R);
+    if (up && cost !== null) up.disabled = this.state.cash < cost;
+  }
+
+  private setIn(sel: string, text: string): void {
+    const el = this.detailEl.querySelector(sel);
+    if (el) el.textContent = text;
+  }
+
+  private dockHead(R: RouteState): string {
+    return `
       <div class="dd-head">
         <div class="dot" style="background:${R.def.color}"></div>
         <div class="dd-name">${R.def.name}</div>
         <button class="dd-close">✕</button>
-      </div>
-      <div class="dd-rep">
-        <div class="dd-rep-top"><span>Reputation</span>
-          <b style="color:${repColor(R.rep)}">${Math.round(R.rep)} · ${repLabel(R.rep)}</b></div>
-        <div class="meter"><i style="width:${R.rep}%;background:${repColor(R.rep)}"></i></div>
-      </div>
-      <div class="dd-segs">${CONFIG.segments
-        .map(
-          (g) => `<div class="dd-seg" style="border-color:${g.color}">
-            <span>${g.icon} ${g.name}</span><b>${Math.round(sw[g.id])} waiting</b></div>`,
-        )
-        .join("")}</div>
+      </div>`;
+  }
+
+  private lockedDockHtml(R: RouteState): string {
+    const cost = nextDockCost(R) ?? 0;
+    const afford = this.state.cash >= cost;
+    const est = Math.round(estDailyPeople(R)).toLocaleString();
+    return `${this.dockHead(R)}
+      <div class="dd-locked">🔒 No dock here yet</div>
       <div class="dd-rows">
-        <div><span>Turnout today</span><b>${turnout}% of base</b></div>
-        <div><span>Gave up yesterday</span><b>${Math.round(R.balkedYesterday).toLocaleString()}</b></div>
+        <div><span>Crossing</span><b>${R.def.distanceNm} nm · ${R.def.crossingMin} min</b></div>
+        <div><span>Potential daily</span><b>${est}</b></div>
       </div>
-      <div class="dd-hint">Leave a segment waiting past its patience → reputation falls → fewer come tomorrow.</div>`;
-    this.detailEl.querySelector(".dd-close")!.addEventListener("click", () => this.selectDock(null));
+      <button class="dd-build" ${afford ? "" : "disabled"}>
+        Build dock — ${money(cost)} <em>(${CONFIG.vesselClasses[0].short}-class)</em>
+      </button>
+      <div class="dd-hint">A new dock opens at ${CONFIG.vesselClasses[0].short} capacity. Upgrade it later for bigger vessels.</div>`;
+  }
+
+  private openDockHtml(R: RouteState): string {
+    const sw = segWaiting(R);
+    const turnout = Math.round(repFactor(R.demandRep) * 100);
+    const tierName = CONFIG.vesselClasses[R.dockTier].short;
+    const upCost = nextDockCost(R);
+    const upName = upCost !== null ? CONFIG.vesselClasses[R.dockTier + 1].short : null;
+    const afford = upCost !== null && this.state.cash >= upCost;
+    const upgrade =
+      upCost === null
+        ? `<div class="dd-tier-max">Top tier — berths every vessel</div>`
+        : `<button class="dd-upgrade" ${afford ? "" : "disabled"}>
+             Upgrade to ${upName} — ${money(upCost)}</button>`;
+
+    const segs = CONFIG.segments
+      .map((g) => {
+        const sr = R.segRep[g.id];
+        return `<div class="dd-seg" style="border-color:${g.color}">
+          <span>${g.icon} ${g.name}</span>
+          <span class="dd-seg-meter"><i data-segrepbar="${g.id}" style="width:${sr}%;background:${repColor(sr)}"></i></span>
+          <b data-segrep="${g.id}">${Math.round(sr)}</b>
+          <em data-segwait="${g.id}">${Math.round(sw[g.id])} waiting</em></div>`;
+      })
+      .join("");
+
+    return `${this.dockHead(R)}
+      <div class="dd-rep">
+        <div class="dd-rep-top"><span>Reputation by segment</span>
+          <b data-dd-rep style="color:${repColor(R.rep)}">${Math.round(R.rep)} · ${repLabel(R.rep)}</b></div>
+      </div>
+      <div class="dd-segs">${segs}</div>
+      <div class="dd-rows">
+        <div><span>Turnout today</span><b data-dd-turnout>${turnout}% of base</b></div>
+        <div><span>Gave up yesterday</span><b data-dd-balked>${Math.round(R.balkedYesterday).toLocaleString()}</b></div>
+      </div>
+      <div class="dd-tier">
+        <div class="dd-tier-now"><span>Dock</span><b>${tierName}-class</b></div>
+        ${upgrade}
+      </div>
+      <div class="dd-hint">Each segment now keeps its own reputation — strand commuters and only commuters thin out.</div>`;
   }
 
   // ---- per-frame -----------------------------------------------------------
@@ -229,7 +334,12 @@ export class Panel {
       }
     }
 
-    if (this.selectedDock) this.renderDockDetail();
+    if (this.selectedDock) {
+      // only rebuild the DOM when the panel's shape changes (so buttons stay
+      // clickable); otherwise just patch the live numbers in place.
+      if (this.dockKey(this.selectedDock) !== this.detailKey) this.renderDockDetail();
+      else this.refreshDockDetail();
+    }
     // keep buy affordability fresh
     this.buyWrap
       .querySelectorAll<HTMLButtonElement>(".buy-card")

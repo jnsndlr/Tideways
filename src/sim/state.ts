@@ -1,4 +1,4 @@
-import { CONFIG } from "../config";
+import { CONFIG, maxDockTier } from "../config";
 import type { Boat, DirQueue, GameState, RouteState } from "../types";
 
 function newDirQueue(): DirQueue {
@@ -7,9 +7,16 @@ function newDirQueue(): DirQueue {
   return q;
 }
 
+function newSegReps(value: number): Record<string, number> {
+  const r: Record<string, number> = {};
+  for (const seg of CONFIG.segments) r[seg.id] = value;
+  return r;
+}
+
 export function createState(): GameState {
   const routes: Record<string, RouteState> = {};
   for (const def of CONFIG.routes) {
+    const docked = def.startDocked === true;
     routes[def.id] = {
       def,
       out: newDirQueue(),
@@ -18,10 +25,14 @@ export function createState(): GameState {
       balkedToday: 0,
       balkedYesterday: 0,
       sailingsToday: 0,
+      segRep: newSegReps(CONFIG.repStart),
+      segDemandRep: newSegReps(CONFIG.repStart),
       rep: CONFIG.repStart,
       demandRep: CONFIG.repStart,
       footPrice: CONFIG.fare.foot,
       carPrice: CONFIG.fare.car,
+      hasDock: docked,
+      dockTier: docked ? CONFIG.docks.startTier : -1,
     };
   }
 
@@ -77,4 +88,37 @@ export function addTrip(state: GameState, boat: Boat, routeId: string, depart: n
 
 export function removeTrip(boat: Boat, tripId: number): void {
   boat.itinerary = boat.itinerary.filter((t) => t.id !== tripId);
+}
+
+// ---- Docks ----------------------------------------------------------------
+
+/** Cost to take a route from its current dock state to the next tier up.
+ *  Returns null when the dock is already at the top tier. */
+export function nextDockCost(R: RouteState): number | null {
+  const target = R.dockTier + 1; // build (-1 -> 0) or upgrade (t -> t+1)
+  if (target > maxDockTier) return null;
+  return CONFIG.docks.upgradeCost[target];
+}
+
+/** Build a dock on a locked island (tier 0). Returns true on success. */
+export function buildDock(state: GameState, routeId: string): boolean {
+  const R = state.routes[routeId];
+  if (!R || R.hasDock) return false;
+  const cost = CONFIG.docks.upgradeCost[0];
+  if (state.cash < cost) return false;
+  state.cash -= cost;
+  R.hasDock = true;
+  R.dockTier = 0;
+  return true;
+}
+
+/** Upgrade a dock by one tier (Express -> Hiyu -> Issaquah -> Jumbo). */
+export function upgradeDock(state: GameState, routeId: string): boolean {
+  const R = state.routes[routeId];
+  if (!R || !R.hasDock || R.dockTier >= maxDockTier) return false;
+  const cost = nextDockCost(R);
+  if (cost === null || state.cash < cost) return false;
+  state.cash -= cost;
+  R.dockTier += 1;
+  return true;
 }
