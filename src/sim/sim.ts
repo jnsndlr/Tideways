@@ -37,7 +37,8 @@ export function step(state: GameState, dtMin: number): void {
     state.day++;
     for (const id in state.routes) {
       const R = state.routes[id];
-      R.rep += (CONFIG.repNeutral - R.rep) * CONFIG.repDriftToNeutral;
+      const drift = R.rep > CONFIG.repNeutral ? CONFIG.repDriftDown : CONFIG.repDriftUp;
+      R.rep += (CONFIG.repNeutral - R.rep) * drift;
       R.rep = Math.max(0, Math.min(100, R.rep));
       R.demandRep = R.rep;
       R.balkedYesterday = R.balkedToday;

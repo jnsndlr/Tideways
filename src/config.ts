@@ -33,10 +33,11 @@ export const CONFIG = {
 
   // Reputation (per dock) — slow + forgiving
   repStart: 80,
-  repServedGain: 0.000_15,
-  repBalkLoss: 0.003,
-  repDriftToNeutral: 0.03,
-  repNeutral: 65,
+  repServedGain: 0.000_6, // serving well is now a real lever to climb back up
+  repBalkLoss: 0.002, // balking still hurts, but recovery is possible
+  repDriftDown: 0.03, // above neutral: gently sag toward neutral
+  repDriftUp: 0.01, // below neutral: barely floor you — you must earn it back
+  repNeutral: 60,
   repDemand: { atZero: 0.55, atNeutral: 1.0, atFull: 1.2 },
 
   // Demand segments — distinct behaviour so levers conflict
