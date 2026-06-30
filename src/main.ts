@@ -24,11 +24,11 @@ const panel = new Panel(state, {
   onSpeed: (speed) => {
     state.speed = speed;
   },
-  onBuildDock: (routeId) => {
-    if (buildDock(state, routeId)) {
+  onBuildDock: (portId) => {
+    if (buildDock(state, portId)) {
       panel.buildRoutes();
       timeline.rebuild();
-      panel.selectDock(routeId); // re-render detail, now an open dock
+      panel.selectDock(portId); // re-render detail, now an open dock
     }
   },
   onAddSlip: (portId) => {

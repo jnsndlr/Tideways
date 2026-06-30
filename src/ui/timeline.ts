@@ -53,7 +53,9 @@ export class Timeline {
     pal.appendChild(hint);
     for (const id in this.state.routes) {
       const R = this.state.routes[id];
-      if (!R.slips.length) continue; // can't schedule sailings to a locked island
+      const a = this.state.ports[R.def.from];
+      const b = this.state.ports[R.def.to];
+      if (!a.slips.length || !b.slips.length) continue; // both ends must be docked
       const chip = document.createElement("button");
       chip.className = "tl-chip";
       chip.style.background = R.def.color;
@@ -189,10 +191,15 @@ export class Timeline {
     this.drag = null;
 
     const hit = this.laneAt(e.clientX, e.clientY - 0);
-    // a boat can only call at a port with a slip big enough to berth it
-    const slips = this.state.routes[drag.routeId].slips;
+    // a boat can only run a leg if BOTH ends have a slip big enough to berth it
+    const rdef = this.state.routes[drag.routeId].def;
+    const fromSlips = this.state.ports[rdef.from].slips;
+    const toSlips = this.state.ports[rdef.to].slips;
     const fitsDock =
-      hit && slips.length > 0 && vesselRank(hit.boat.classId) <= Math.max(...slips);
+      hit !== null &&
+      fromSlips.length > 0 &&
+      toSlips.length > 0 &&
+      vesselRank(hit.boat.classId) <= Math.min(Math.max(...fromSlips), Math.max(...toSlips));
     if (hit && fitsDock) {
       const dur = tripDuration(this.state.routes[drag.routeId], hit.boat.classId);
       const desired = START + ((e.clientX - drag.grabDx - hit.rect.left) / hit.rect.width) * SPAN;

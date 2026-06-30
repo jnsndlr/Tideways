@@ -1,6 +1,7 @@
-import { CONFIG } from "../config";
-import type { GameState, SegmentDef } from "../types";
+import { CONFIG, nmBetween } from "../config";
+import type { GameState, RouteState, SegmentDef } from "../types";
 import { carPriceFactor, footPriceFactor, repFactor } from "./demandResponse";
+import { getRouting } from "./routing";
 
 // Each segment has its own daily curve shape (from its peaks).
 export function segCurve(seg: SegmentDef, min: number): number {
@@ -21,23 +22,70 @@ const SEG_AREA: Record<string, number> = (() => {
   return out;
 })();
 
-/** Add newly-arrived demand to every route's per-segment queues. */
-export function accrueDemand(state: GameState, dtMin: number): void {
+/** The route connecting two adjacent ports (either direction), or null. */
+export function routeBetween(state: GameState, a: string, b: string): RouteState | null {
   for (const id in state.routes) {
-    const R = state.routes[id];
-    if (!R.slips.length) continue; // locked islands generate no demand until built
-    for (const seg of CONFIG.segments) {
-      const rf = repFactor(R.segDemandRep[seg.id]); // this segment's own standing
-      const w = segCurve(seg, state.clock) / SEG_AREA[seg.id];
+    const r = state.routes[id].def;
+    if ((r.from === a && r.to === b) || (r.from === b && r.to === a)) return state.routes[id];
+  }
+  return null;
+}
+
+interface PairWeight {
+  from: string;
+  to: string;
+  w: number;
+}
+
+/** Static gravity weights for every reachable docked O/D pair, per segment. */
+function pairWeights(state: GameState, seg: SegmentDef): { pairs: PairWeight[]; sum: number } {
+  const routing = getRouting(state);
+  const docked = Object.keys(state.ports).filter((id) => state.ports[id].slips.length);
+  const pairs: PairWeight[] = [];
+  let sum = 0;
+  for (const a of docked) {
+    const popA = state.ports[a].def.pop[seg.id] ?? 0;
+    if (popA <= 0) continue;
+    for (const b of docked) {
+      if (a === b) continue;
+      const drawB = state.ports[b].def.draw[seg.id] ?? 0;
+      if (drawB <= 0) continue;
+      if (!routing.reachable(a, b)) continue; // no path -> no latent demand surfaced in v1
+      const nm = nmBetween(state.ports[a].def.pos, state.ports[b].def.pos);
+      const w = popA * drawB * Math.exp(-nm / CONFIG.od.decayScaleNm);
       if (w <= 0) continue;
-      const base = R.def.demand[seg.id];
-      if (!base) continue;
-      const foot = base.foot * w * dtMin * rf * footPriceFactor(R, seg);
-      const car = base.car * w * dtMin * rf * carPriceFactor(R, seg);
-      R.out[seg.id].foot += foot / 2;
-      R.in[seg.id].foot += foot / 2;
-      R.out[seg.id].car += car / 2;
-      R.in[seg.id].car += car / 2;
+      pairs.push({ from: a, to: b, w });
+      sum += w;
+    }
+  }
+  return { pairs, sum };
+}
+
+/** Add newly-arrived demand to every origin port's per-destination queues. */
+export function accrueDemand(state: GameState, dtMin: number): void {
+  const routing = getRouting(state);
+  for (const seg of CONFIG.segments) {
+    const { pairs, sum } = pairWeights(state, seg);
+    if (sum <= 0) continue;
+    const curve = segCurve(seg, state.clock) / SEG_AREA[seg.id];
+    if (curve <= 0) continue;
+    const volume = CONFIG.od.dailyVolume[seg.id] ?? 0;
+    for (const { from, to, w } of pairs) {
+      const O = state.ports[from];
+      // people wanting this trip in this slice, before mode split / response
+      let people = volume * (w / sum) * curve * dtMin * repFactor(O.segDemandRep[seg.id]);
+      if (people <= 0) continue;
+      // price elasticity applies to the first leg they'd board
+      const hop = routing.nextHop(from, to);
+      const leg = hop ? routeBetween(state, from, hop) : null;
+      const footP = leg ? footPriceFactor(leg, seg) : 1;
+      const carP = leg ? carPriceFactor(leg, seg) : 1;
+      const car = people * seg.carShare * carP;
+      const foot = people * (1 - seg.carShare) * footP;
+      const q = (O.queues[to] ??= {});
+      const sq = (q[seg.id] ??= { foot: 0, car: 0, wait: 0 });
+      sq.foot += foot;
+      sq.car += car / CONFIG.avgOccupancy; // store car COUNT, not people
     }
   }
 }
