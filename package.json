@@ -8,7 +8,8 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "esbuild test/smoke.ts --bundle --platform=node --format=cjs --outfile=test/.smoke.cjs && node test/.smoke.cjs"
+    "test": "esbuild test/smoke.ts --bundle --platform=node --format=cjs --outfile=test/.smoke.cjs && node test/.smoke.cjs",
+    "balance": "esbuild test/balance.ts --bundle --platform=node --format=cjs --outfile=test/.balance.cjs && node test/.balance.cjs"
   },
   "devDependencies": {
     "esbuild": "^0.25.12",

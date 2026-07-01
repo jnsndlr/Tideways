@@ -37,6 +37,18 @@ interface PairWeight {
   w: number;
 }
 
+/** Daily trip total for a segment = per-resident rate × docked island population.
+ *  Excludes the hub so opening an island grows the pie instead of splitting it. */
+export function segDailyVolume(state: GameState, segId: string): number {
+  let islandPop = 0;
+  for (const id in state.ports) {
+    const P = state.ports[id];
+    if (P.def.isHub || !P.slips.length) continue;
+    islandPop += P.def.pop[segId] ?? 0;
+  }
+  return (CONFIG.od.tripsPerResident[segId] ?? 0) * islandPop;
+}
+
 /** Static gravity weights for every reachable docked O/D pair, per segment. */
 function pairWeights(state: GameState, seg: SegmentDef): { pairs: PairWeight[]; sum: number } {
   const routing = getRouting(state);
@@ -69,7 +81,7 @@ export function accrueDemand(state: GameState, dtMin: number): void {
     if (sum <= 0) continue;
     const curve = segCurve(seg, state.clock) / SEG_AREA[seg.id];
     if (curve <= 0) continue;
-    const volume = CONFIG.od.dailyVolume[seg.id] ?? 0;
+    const volume = segDailyVolume(state, seg.id);
     for (const { from, to, w } of pairs) {
       const O = state.ports[from];
       // people wanting this trip in this slice, before mode split / response
@@ -88,4 +100,27 @@ export function accrueDemand(state: GameState, dtMin: number): void {
       sq.car += car / CONFIG.avgOccupancy; // store car COUNT, not people
     }
   }
+}
+
+export interface ODEntry {
+  from: string;
+  to: string;
+  seg: string;
+  people: number; // full-day potential (response-neutral: no rep / price modifier)
+}
+
+/** Structural daily O/D matrix — the demand the network would generate at
+ *  neutral turnout. Used by the balance report; the day-curve integrates to 1,
+ *  so a pair's full-day people is just volume × (weight / Σweight). */
+export function dailyODByPair(state: GameState): ODEntry[] {
+  const out: ODEntry[] = [];
+  for (const seg of CONFIG.segments) {
+    const { pairs, sum } = pairWeights(state, seg);
+    if (sum <= 0) continue;
+    const volume = segDailyVolume(state, seg.id);
+    for (const { from, to, w } of pairs) {
+      out.push({ from, to, seg: seg.id, people: (volume * w) / sum });
+    }
+  }
+  return out;
 }

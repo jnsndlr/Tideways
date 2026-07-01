@@ -81,6 +81,7 @@ export function boardAt(state: GameState, boat: Boat, port: string, next: string
   }
 
   state.cash += revenue;
+  state.revenueToday += revenue;
   P.servedToday += boardedPeople;
   refreshPax(boat);
 }
@@ -109,7 +110,9 @@ export function arriveAt(state: GameState, boat: Boat, port: string): void {
 }
 
 export function chargeFuel(state: GameState, boat: Boat, R: RouteState): void {
-  state.cash -= R.def.distanceNm * vesselById(boat.classId).fuelPerNm;
+  const cost = R.def.distanceNm * vesselById(boat.classId).fuelPerNm;
+  state.cash -= cost;
+  state.fuelToday += cost;
 }
 
 /** Boats currently occupying a berth at a port (loading). */

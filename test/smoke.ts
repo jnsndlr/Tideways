@@ -25,21 +25,22 @@ function check(name: string, cond: boolean, detail?: unknown) {
 // ---- 2. end-to-end transfer: Lopez -> (hub) -> Friday ----------------------
 {
   // disable organic demand so we can track a single seeded cohort
-  const saved = { ...CONFIG.od.dailyVolume };
-  CONFIG.od.dailyVolume.commuter = 0;
-  CONFIG.od.dailyVolume.tourist = 0;
-  CONFIG.od.dailyVolume.freight = 0;
+  const saved = { ...CONFIG.od.tripsPerResident };
+  CONFIG.od.tripsPerResident.commuter = 0;
+  CONFIG.od.tripsPerResident.tourist = 0;
+  CONFIG.od.tripsPerResident.freight = 0;
 
   const s = createState();
   const boat = s.boats[0];
-  // run the Lopez leg first (collect the cohort), then the Friday leg (deliver it)
+  // run the Lopez leg first (collect the cohort), then a tight Friday connection
+  // (the cohort reaches the hub ~7:10; commuter patience is 55 min, so the
+  // transfer sailing must leave before they balk)
   addTrip(s, boat, "r-lopez", 6 * 60);
-  addTrip(s, boat, "r-friday", 9 * 60);
+  addTrip(s, boat, "r-friday", 7 * 60 + 30);
 
   // seed 100 foot commuters at Lopez bound for Friday Harbor
   s.ports.lopez.queues.friday = { commuter: { foot: 100, car: 0, wait: 0 } };
 
-  const cash0 = s.cash;
   for (let t = 6 * 60; t < 22 * 60; t += 2) advance(s, 2);
 
   const stuckAtLopez = waitingFor(s.ports.lopez, "friday");
@@ -49,10 +50,10 @@ function check(name: string, cond: boolean, detail?: unknown) {
   check("cohort left Lopez", stuckAtLopez < 1, stuckAtLopez);
   check("cohort cleared hub (transferred + delivered)", stuckAtHub < 1, stuckAtHub);
   check("nobody re-queued at destination", stuckAtFriday < 1, stuckAtFriday);
-  // fare charged per leg: two boarded legs, minus fuel on both
-  check("revenue reflects two paid legs", s.cash - cash0 > 0, Math.round(s.cash - cash0));
+  // per-leg fares: 100 foot riders x 2 boarded legs x $14 = $2,800 gross revenue
+  check("per-leg fares charged (two legs)", s.revenueToday > 2700 && s.revenueToday < 2900, Math.round(s.revenueToday));
 
-  Object.assign(CONFIG.od.dailyVolume, saved);
+  Object.assign(CONFIG.od.tripsPerResident, saved);
 }
 
 // ---- 3. organic multi-day run does not crash & moves people ----------------

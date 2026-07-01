@@ -4,3 +4,5 @@ dist/
 *.log
 .vercel
 test/.smoke.cjs
+
+test/.balance.cjs
