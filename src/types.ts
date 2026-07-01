@@ -72,6 +72,7 @@ export interface PortState {
   def: PortDef;
   queues: PortQueues;
   servedToday: number;
+  servedYesterday: number;
   balkedToday: number;
   balkedYesterday: number;
   segRep: Record<string, number>; // per-segment reputation 0..100
@@ -84,6 +85,7 @@ export interface PortState {
 export interface RouteState {
   def: RouteDef;
   sailingsToday: number;
+  sailingsYesterday: number;
   footPrice: number;
   carPrice: number;
 }
@@ -125,6 +127,10 @@ export interface GameState {
   boatCounter: number;
   tripCounter: number;
   hubId: string; // id of the hub port (home berths live there)
+  fuelToday: number; // fuel $ spent so far today (accumulates; reset at rollover)
+  revenueToday: number; // fare $ taken so far today
+  fuelYesterday: number; // previous full day's fuel spend (stable readout)
+  revenueYesterday: number; // previous full day's fare revenue
   daysInDebt: number; // consecutive day rollovers ending with cash < 0
   gameOver: boolean;
   companyValue: number; // cash + resale value of the fleet (HUD score)

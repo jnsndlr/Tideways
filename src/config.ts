@@ -5,7 +5,7 @@ import type { PortDef, RouteDef, SegmentDef, Vec2, VesselClass } from "./types";
 // =============================================================================
 
 export const CONFIG = {
-  startCash: 150_000,
+  startCash: 500_000,
 
   // Time
   gameMinPerSec: 6,
@@ -18,10 +18,10 @@ export const CONFIG = {
   // Vessel classes (toy-scaled, PNW-flavoured). dailyCost = fixed overhead per
   // day just to own/crew the hull, charged whether it sails or sits idle.
   vesselClasses: [
-    { id: "po", name: "Passenger Express", short: "Express", peopleCap: 300, carCap: 0, speedFactor: 1.5, fuelPerNm: 12, cost: 55_000, dailyCost: 600 },
-    { id: "hiyu", name: "M/V Hiyu", short: "Hiyu", peopleCap: 200, carCap: 34, speedFactor: 1.0, fuelPerNm: 20, cost: 90_000, dailyCost: 1_000 },
-    { id: "medium", name: "M/V Issaquah", short: "Issaquah", peopleCap: 500, carCap: 80, speedFactor: 1.0, fuelPerNm: 30, cost: 175_000, dailyCost: 1_800 },
-    { id: "large", name: "M/V Jumbo", short: "Jumbo", peopleCap: 900, carCap: 150, speedFactor: 0.9, fuelPerNm: 42, cost: 290_000, dailyCost: 2_800 },
+    { id: "po", name: "Passenger Express", short: "Express", peopleCap: 300, carCap: 0, speedFactor: 1.5, fuelPerNm: 35, cost: 200_000, dailyCost: 3_000 },
+    { id: "hiyu", name: "M/V Hiyu", short: "Hiyu", peopleCap: 200, carCap: 34, speedFactor: 1.0, fuelPerNm: 70, cost: 320_000, dailyCost: 7_000 },
+    { id: "medium", name: "M/V Issaquah", short: "Issaquah", peopleCap: 500, carCap: 80, speedFactor: 1.0, fuelPerNm: 105, cost: 650_000, dailyCost: 13_000 },
+    { id: "large", name: "M/V Jumbo", short: "Jumbo", peopleCap: 900, carCap: 150, speedFactor: 0.9, fuelPerNm: 150, cost: 1_050_000, dailyCost: 22_000 },
   ] as VesselClass[],
   startVessel: "hiyu",
 
@@ -54,23 +54,25 @@ export const CONFIG = {
   // port only if some slip there is big enough. At the home port the slip COUNT
   // is the fleet cap and the biggest slip is the largest vessel you may own.
   slipCfg: {
-    buildSlipCost: 60_000, // build the first slip on a locked island (tier 0)
-    addSlipCost: 70_000, // ×(current slip count) to add another slip to a port
+    buildSlipCost: 180_000, // build the first slip on a locked island (tier 0)
+    addSlipCost: 200_000, // ×(current slip count) to add another slip to a port
     // cost to raise a slip TO tier i (index = target tier; index 0 = build)
-    sizeUpgradeCost: [60_000, 45_000, 110_000, 190_000],
+    sizeUpgradeCost: [180_000, 130_000, 320_000, 550_000],
     islandStartTier: 1, // islands you start with have one Hiyu-capable slip
     hubStartSlips: [1, 1, 1], // home berths: count = fleet cap, tiers = ownable sizes
   },
 
   // Origin/destination demand — a gravity model over ports.
   // vol(A->B, seg) ∝ pop[seg](A) · draw[seg](B) · decay(distance), normalized so
-  // each segment delivers ~dailyVolume people/day across all docked O/D pairs.
+  // each segment delivers a daily total across all docked O/D pairs. That total
+  // scales with the docked ISLAND population (tripsPerResident × Σ island pop),
+  // so opening a new island ADDS demand rather than diluting the existing pie.
   // Hub pop/draw are large, so most trips touch the mainland (hub-dominant), with
-  // island↔island a meaningful minority. carShare splits people into foot vs car.
+  // island↔island a minority (~10-15%). carShare splits people into foot vs car.
   od: {
     nmPerUnit: 18, // map is normalized 0..1; this scales position distance into nm
-    decayScaleNm: 16, // gravity distance decay e^(-nm/scale); bigger = flatter
-    dailyVolume: { commuter: 12_000, tourist: 24_000, freight: 3_500 } as Record<string, number>,
+    decayScaleNm: 16, // gravity distance decay e^(-nm/scale); bigger = flatter (more interisland)
+    tripsPerResident: { commuter: 0.6, tourist: 0.85, freight: 1.0 } as Record<string, number>,
   },
 
   // Demand segments — distinct behaviour so levers conflict

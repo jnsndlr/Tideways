@@ -7,9 +7,12 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "esbuild test/smoke.ts --bundle --platform=node --format=cjs --outfile=test/.smoke.cjs && node test/.smoke.cjs",
+    "balance": "esbuild test/balance.ts --bundle --platform=node --format=cjs --outfile=test/.balance.cjs && node test/.balance.cjs"
   },
   "devDependencies": {
+    "esbuild": "^0.25.12",
     "typescript": "^5.6.3",
     "vite": "^6.0.7"
   }

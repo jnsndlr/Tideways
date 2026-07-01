@@ -46,10 +46,18 @@ export function step(state: GameState, dtMin: number): void {
         P.segDemandRep[seg.id] = P.segRep[seg.id]; // yesterday's service shapes today
       }
       P.balkedYesterday = P.balkedToday;
+      P.servedYesterday = P.servedToday;
       P.servedToday = 0;
       P.balkedToday = 0;
     }
-    for (const id in state.routes) state.routes[id].sailingsToday = 0;
+    for (const id in state.routes) {
+      state.routes[id].sailingsYesterday = state.routes[id].sailingsToday;
+      state.routes[id].sailingsToday = 0;
+    }
+    state.fuelYesterday = state.fuelToday;
+    state.revenueYesterday = state.revenueToday;
+    state.fuelToday = 0;
+    state.revenueToday = 0;
 
     // fleet upkeep: every hull costs its daily overhead, sailing or idle
     let upkeep = 0;

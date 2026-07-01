@@ -20,6 +20,7 @@ export function createState(): GameState {
       def,
       queues: {},
       servedToday: 0,
+      servedYesterday: 0,
       balkedToday: 0,
       balkedYesterday: 0,
       segRep: newSegReps(CONFIG.repStart),
@@ -35,6 +36,7 @@ export function createState(): GameState {
     routes[def.id] = {
       def,
       sailingsToday: 0,
+      sailingsYesterday: 0,
       footPrice: CONFIG.fare.foot,
       carPrice: CONFIG.fare.car,
     };
@@ -52,6 +54,10 @@ export function createState(): GameState {
     boatCounter: 0,
     tripCounter: 0,
     hubId: HUB_ID,
+    fuelToday: 0,
+    revenueToday: 0,
+    fuelYesterday: 0,
+    revenueYesterday: 0,
     daysInDebt: 0,
     gameOver: false,
     companyValue: CONFIG.startCash,

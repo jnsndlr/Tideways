@@ -149,3 +149,27 @@ researching) a new direct route.
 Multiple routes calling at the same port makes per-port **slip count** mechanically
 meaningful (berth contention) — the slip rework laid this groundwork. Hub contention bites as
 soon as Phase 1 lands.
+
+### Balance pass (2026-06-30)
+
+Tuned the gravity model + economy against a headless report (`npm run balance`,
+`test/balance.ts`) that prints the structural demand mix and an operational 3-Hiyu run.
+Targets: interisland ≤10-15% (hub dominant), serviceable starting islands, and an economy
+that closes with fuel as a real tradeoff.
+
+Model changes:
+- **Population-scaled demand.** Total per-segment volume is now
+  `tripsPerResident × Σ docked-island pop`, not a fixed constant — opening an island *adds*
+  demand instead of diluting the pie (fixed-pie normalization shrank every island each time
+  you docked a new one).
+- **Fuel & revenue are tracked state** (`fuelToday`/`revenueToday` + yesterday snapshots) so
+  the fuel tradeoff is measurable and HUD-surfaceable.
+
+Landing numbers (3 starting islands, 3 dedicated Hiyus):
+- Demand: ~6,450 trips/day, **8.9% interisland** (per-segment 8-11%), hub 91%.
+  `tripsPerResident` = 0.6 / 0.85 / 1.0; `decayScaleNm` 16 (raise for more interisland).
+- Balk: Lopez 4% · Orcas 12% · Friday 28% (Friday runs hot → pressure to add capacity).
+- Economy ("raise costs, keep fares" decision): fares unchanged ($14/$30); vessel prices
+  ~3.5×, daily upkeep ~4-7×, fuelPerNm ~3×, startCash 150k→500k, slip costs ~3×. Result:
+  revenue ~$89k/day, **fuel ~54% of revenue**, upkeep $21k, **net ~$20k/day** for 3 boats —
+  earned, not printed. (The report over-schedules Lopez, so optimized play does better.)
