@@ -11,6 +11,7 @@ import { repColor } from "../render/canvas";
 import type { GameState, PortState, RouteState } from "../types";
 
 const money = (n: number) => "$" + Math.round(n).toLocaleString();
+const signed = (n: number) => (n < 0 ? "−$" : "+$") + Math.abs(Math.round(n)).toLocaleString();
 const clockStr = (m: number) =>
   String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(Math.floor(m % 60)).padStart(2, "0");
 const repLabel = (r: number) =>
@@ -256,7 +257,19 @@ export class Panel {
 
     if (id === this.state.hubId) {
       this.setIn("[data-hub-fleet]", `${this.state.boats.length} / ${this.hubSlips.length}`);
-      this.setIn("[data-hub-upkeep]", money(this.fleetUpkeep()) + "/day");
+      const has = this.state.day > 1;
+      const rev = this.state.revenueYesterday;
+      const fuel = this.state.fuelYesterday;
+      const net = this.dailyNet();
+      const fpct = has && rev > 0 ? Math.round((fuel / rev) * 100) + "%" : "—";
+      this.setIn("[data-hub-rev]", has ? signed(rev) : "—");
+      this.setIn("[data-hub-fuel]", has ? signed(-fuel) + " · " + fpct : "—");
+      this.setIn("[data-hub-upkeep]", signed(-this.fleetUpkeep()));
+      const netEl = this.detailEl.querySelector<HTMLElement>("[data-hub-net]");
+      if (netEl) {
+        netEl.textContent = net === null ? "—" : signed(net);
+        netEl.style.color = net === null ? "" : net >= 0 ? "var(--good)" : "var(--bad)";
+      }
       return;
     }
     const P = this.state.ports[id];
@@ -291,6 +304,13 @@ export class Panel {
     return this.state.boats.reduce((a, b) => a + vesselById(b.classId).dailyCost, 0);
   }
 
+  /** Yesterday's full-day profit (revenue − fuel − upkeep), or null on day 1
+   *  when no day has completed yet. */
+  private dailyNet(): number | null {
+    if (this.state.day <= 1) return null;
+    return this.state.revenueYesterday - this.state.fuelYesterday - this.fleetUpkeep();
+  }
+
   private dockHead(name: string, color: string): string {
     return `
       <div class="dd-head">
@@ -320,13 +340,26 @@ export class Panel {
 
   private homePortHtml(): string {
     const hub = this.state.ports[this.state.hubId];
+    const has = this.state.day > 1;
+    const rev = this.state.revenueYesterday;
+    const fuel = this.state.fuelYesterday;
+    const net = this.dailyNet();
+    const fpct = has && rev > 0 ? Math.round((fuel / rev) * 100) + "%" : "—";
+    const netColor = net === null ? "" : net >= 0 ? "var(--good)" : "var(--bad)";
     return `${this.dockHead(hub.def.name + " · Home Port", "#57b6e0")}
       <div class="dd-rows">
         <div><span>Fleet berths</span><b data-hub-fleet>${this.state.boats.length} / ${this.hubSlips.length}</b></div>
-        <div><span>Daily upkeep</span><b data-hub-upkeep>${money(this.fleetUpkeep())}/day</b></div>
+      </div>
+      <div class="dd-slips-title">Daily ledger · yesterday</div>
+      <div class="dd-rows">
+        <div><span>Fare revenue</span><b data-hub-rev>${has ? signed(rev) : "—"}</b></div>
+        <div><span>Fuel</span><b data-hub-fuel>${has ? signed(-fuel) + " · " + fpct : "—"}</b></div>
+        <div><span>Fleet upkeep</span><b data-hub-upkeep>${signed(-this.fleetUpkeep())}</b></div>
+        <div style="border-top:1px solid rgba(255,255,255,.12);margin-top:2px;padding-top:4px">
+          <span>Net / day</span><b data-hub-net style="color:${netColor}">${net === null ? "—" : signed(net)}</b></div>
       </div>
       ${this.slipsHtml(this.hubSlips)}
-      <div class="dd-hint">Berths cap your fleet size; a slip's size sets the largest vessel you can base. Add a berth to own more ferries; upgrade a slip to run bigger ones.</div>`;
+      <div class="dd-hint">Berths cap your fleet size; a slip's size sets the largest vessel you can base. Fuel is charged every crossing — running near-empty sailings quietly eats the ledger.</div>`;
   }
 
   private lockedDockHtml(P: PortState, route: RouteState | null): string {
@@ -384,6 +417,11 @@ export class Panel {
     this.setText("[data-clock]", clockStr(s.clock));
     this.setText("[data-rep]", String(Math.round(s.rep)));
     this.setText("[data-value]", money(s.companyValue));
+
+    const net = this.dailyNet();
+    this.setText("[data-net]", net === null ? "—" : signed(net));
+    const netEl = document.querySelector<HTMLElement>("[data-net]");
+    if (netEl) netEl.style.color = net === null ? "" : net >= 0 ? "var(--good)" : "var(--bad)";
 
     // cash warning: turn red and count down to insolvency while in the red
     const cashEl = document.querySelector<HTMLElement>("[data-cash]");
