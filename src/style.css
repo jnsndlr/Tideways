@@ -99,6 +99,21 @@ canvas {
   touch-action: none; /* we handle pinch/pan ourselves */
 }
 
+#new-game {
+  display: block;
+  margin: 14px auto 4px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--txt-dim);
+  font-size: 11px;
+}
+#new-game:active {
+  color: var(--bad);
+  border-color: var(--bad);
+}
+
 /* ---- Control panel ---- */
 #panel {
   background: var(--panel);

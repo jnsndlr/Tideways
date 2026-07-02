@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="water" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1d5a7a"/>
+      <stop offset="1" stop-color="#10374e"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="96" fill="url(#water)"/>
+  <!-- waves -->
+  <path d="M64 372c32 0 32 16 64 16s32-16 64-16 32 16 64 16 32-16 64-16 32 16 64 16 32-16 64-16" fill="none" stroke="#7fc4e8" stroke-width="14" stroke-linecap="round" opacity="0.5"/>
+  <path d="M96 424c32 0 32 14 64 14s32-14 64-14 32 14 64 14 32-14 64-14 32 14 64 14" fill="none" stroke="#7fc4e8" stroke-width="12" stroke-linecap="round" opacity="0.3"/>
+  <!-- hull -->
+  <path d="M110 320 L402 320 L368 364 L144 364 Z" fill="#1f6f54"/>
+  <!-- cabin -->
+  <rect x="150" y="248" width="212" height="76" rx="14" fill="#f4f1e8"/>
+  <rect x="196" y="196" width="120" height="60" rx="12" fill="#f4f1e8"/>
+  <!-- windows -->
+  <circle cx="188" cy="286" r="12" fill="#15445f"/>
+  <circle cx="236" cy="286" r="12" fill="#15445f"/>
+  <circle cx="284" cy="286" r="12" fill="#15445f"/>
+  <circle cx="332" cy="286" r="12" fill="#15445f"/>
+  <rect x="214" y="212" width="84" height="24" rx="8" fill="#15445f"/>
+  <!-- stack -->
+  <rect x="240" y="152" width="32" height="52" rx="8" fill="#e06f4f"/>
+</svg>

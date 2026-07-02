@@ -3,7 +3,17 @@
 // without a browser. Covers routing, hub transfers, per-leg fares, and the
 // gravity demand generator.
 import { CONFIG } from "../src/config";
-import { createState, advance, getRouting, addTrip, waitingFor } from "../src/sim";
+import {
+  createState,
+  advance,
+  getRouting,
+  addTrip,
+  waitingFor,
+  waitingPeople,
+  openRoute,
+  serialize,
+  deserialize,
+} from "../src/sim";
 
 let failures = 0;
 function check(name: string, cond: boolean, detail?: unknown) {
@@ -72,6 +82,42 @@ function check(name: string, cond: boolean, detail?: unknown) {
     }
   check("organic run served riders", peakServed > 0, Math.round(peakServed));
   check("no NaN cash", Number.isFinite(s.cash), s.cash);
+}
+
+// ---- 4. save round-trip: serialize -> deserialize preserves the game -------
+{
+  const s = createState();
+  const boat = s.boats[0];
+  addTrip(s, boat, "r-lopez", 7 * 60);
+  addTrip(s, boat, "r-friday", 13 * 60);
+  const direct = openRoute(s, "lopez", "friday"); // player-created route must survive
+  s.routes["r-lopez"].footPrice = 20;
+  for (let t = 0; t < 2000; t += 5) advance(s, 5); // run past a day rollover, boat mid-day
+
+  const raw = serialize(s);
+  const r = deserialize(raw);
+  check("save deserializes", r !== null);
+  if (r) {
+    check("cash survives", Math.abs(r.cash - s.cash) < 0.01, [Math.round(r.cash), Math.round(s.cash)]);
+    check("day/clock survive", r.day === s.day && Math.abs(r.clock - s.clock) < 0.01, [r.day, Math.round(r.clock)]);
+    check("fleet survives", r.boats.length === s.boats.length && r.boats[0].itinerary.length === 2);
+    check("price survives", r.routes["r-lopez"].footPrice === 20, r.routes["r-lopez"].footPrice);
+    check("player route survives", direct !== null && !!r.routes[direct.def.id], direct?.def.id);
+    check(
+      "queues survive",
+      Math.abs(waitingPeople(r.ports.lopez) - waitingPeople(s.ports.lopez)) < 0.01,
+      Math.round(waitingPeople(r.ports.lopez)),
+    );
+    check(
+      "rep survives",
+      Math.abs(r.ports.friday.segRep.commuter - s.ports.friday.segRep.commuter) < 0.01,
+    );
+    // the restored game keeps running without blowing up
+    for (let t = 0; t < 720; t += 5) advance(r, 5);
+    check("restored game advances", Number.isFinite(r.cash) && !Number.isNaN(r.rep));
+  }
+  check("corrupt save rejected", deserialize("{ nope") === null);
+  check("wrong version rejected", deserialize('{"v":999}') === null);
 }
 
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURE(S)`);

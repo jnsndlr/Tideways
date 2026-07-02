@@ -1,11 +1,22 @@
 import "./style.css";
 import { CONFIG } from "./config";
-import { addSlip, advance, buildDock, buyBoat, createState, openRoute, upgradeSlip } from "./sim";
+import {
+  addSlip,
+  advance,
+  buildDock,
+  buyBoat,
+  clearSave,
+  createState,
+  loadGame,
+  openRoute,
+  saveGame,
+  upgradeSlip,
+} from "./sim";
 import { MapRenderer } from "./render/canvas";
 import { Panel } from "./ui/panel";
 import { Timeline } from "./ui/timeline";
 
-const state = createState();
+const state = loadGame() ?? createState();
 
 const canvas = document.getElementById("cv") as HTMLCanvasElement;
 const renderer = new MapRenderer(canvas);
@@ -149,6 +160,27 @@ canvas.addEventListener("pointercancel", (e) => {
   if (e.pointerId === panId) panId = null;
   if (pointers.size < 2) pinchDist = 0;
 });
+
+// ---- Persistence: autosave + explicit new game ----------------------------
+
+setInterval(() => saveGame(state), 5_000);
+// mobile rarely fires unload events — save the moment the tab is backgrounded
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") saveGame(state);
+});
+window.addEventListener("pagehide", () => saveGame(state));
+
+document.getElementById("new-game")!.addEventListener("click", () => {
+  if (!confirm("Abandon this company and start over?")) return;
+  clearSave();
+  location.reload();
+});
+
+// ---- PWA service worker (production builds only; dev server stays uncached) -
+
+if (import.meta.env.PROD && "serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/sw.js").catch(() => {});
+}
 
 // Main loop.
 let last = performance.now();

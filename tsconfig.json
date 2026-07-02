@@ -11,6 +11,7 @@
     "moduleDetection": "force",
     "skipLibCheck": true,
     "noEmit": true,
+    "types": ["vite/client"],
     "forceConsistentCasingInFileNames": true
   },
   "include": ["src"]

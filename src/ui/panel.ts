@@ -2,6 +2,7 @@ import { CONFIG, nmBetween, vesselById } from "../config";
 import {
   addSlipCost,
   buyBlocker,
+  clearSave,
   openRouteCost,
   repFactor,
   routeCandidates,
@@ -528,8 +529,12 @@ export class Panel {
         <div class="go-title">⚓ Insolvent</div>
         <div class="go-sub">The company ran out of money and folded on day ${s.day}.</div>
         <div class="go-stat">Final company value <b>${money(s.companyValue)}</b></div>
-        <button class="go-btn" onclick="location.reload()">New game</button>
+        <button class="go-btn">New game</button>
       </div>`;
+    el.querySelector(".go-btn")!.addEventListener("click", () => {
+      clearSave(); // otherwise the reload would restore the dead company
+      location.reload();
+    });
     document.getElementById("app")!.appendChild(el);
   }
 

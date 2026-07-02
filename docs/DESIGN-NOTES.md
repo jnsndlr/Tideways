@@ -4,7 +4,7 @@ Companion to [Ferry-Game-GDD.md](Ferry-Game-GDD.md) (the canonical vision). This
 tracks how the prototype maps to the GDD and records design decisions as we make them.
 Check implementation against the GDD; check *sequencing* against this file.
 
-_Last updated: 2026-06-30_
+_Last updated: 2026-07-01_
 
 ---
 
@@ -69,27 +69,57 @@ Owning more ferries should require capital **and a reason** **and operational su
 
 ---
 
-## Recommended build order (dependency-driven)
+## Agreed build order (2026-07-01 — supersedes the earlier dependency-driven list)
 
-1. **Economy spine — daily operating costs + solvency win/loss.**
-   Smallest change, but it's the prerequisite for everything: gives ferries a downside,
-   creates the Phase-1 fail condition the GDD calls for, and makes the moorage gate matter.
-   *Lose if cash < 0 for N days; soft goal = grow company value / net worth.*
+The economy spine (#1) and fleet expansion (#2) from the old list are DONE. The new order
+interleaves mobile-viability work with sim depth, so the deep sim gets tested on the platform
+it's meant for. Stop and review after each milestone.
 
-2. **Fleet expansion — moorage + buy-from-berth + per-vessel daily cost + basic refit.**
-   The literal ask. Builds directly on #1; reuses the dock-tier UI.
+1. **Save/load + PWA shell.** Serialize `GameState` to localStorage (autosave + restore on
+   load); manifest + service worker for installability. Mobile table stakes — without it the
+   prototype can't be play-tested on a phone. Smallest milestone; do first.
+2. **Weekday/weekend + seasons.** Day-of-week and season multipliers on per-segment demand
+   volume. Cheapest depth in the game: one timetable stops being optimal forever, and fleet
+   sizing becomes a repeating seasonal decision (needs vessel resale, see notes below).
+3. **Mobile UI restructure.** Bottom tab bar (Map · Schedule · Company), dock detail as a
+   bottom sheet, 44px touch targets, safe-area insets, HUD slimmed to Cash / Net / Day+Time /
+   speed. Route cards dissolve into the map + port sheet.
+4. **Community growth loop ("the heart").** Promote per-port `pop`/`draw` from static config
+   to living state; weekly growth tick driven by rep, served-ratio, and capacity headroom;
+   visible town tiers on the map. Per-segment growth doubles as the community-identity
+   mechanism later.
+5. **Maintenance / wear / breakdowns.** Wear per nm sailed → condition tiers → breakdown
+   risk. Scheduled maintenance takes the boat out of service for a block of hours at the home
+   port, colliding with the timetable — a planning decision, not a repair button.
+6. **Schedule generator.** ⚠️ Interaction design NOT locked yet — needs a dedicated
+   brainstorm before building (form-based? tap-a-pattern? something else). The 3a/3b split in
+   the routing plan below still describes the mechanical shape, but treat the UX as open.
+7. **Contracts + events.** Service-level contracts (mail run, school run: stipend +
+   penalties) and announced-ahead demand events (festivals, closures) — direction and
+   reactivity.
+8. **Graphics art pass (2D).** Seeded-noise island shapes, time-of-day tint, wake trails,
+   docked bob, zoom-dependent labels/detail. Long-term the game goes low-poly 3D; this pass
+   is about making the 2D proof of concept carry the mood and proving readability rules.
 
-3. **Community growth loop ("the heart").**
-   Promote each island from a static `demand` table to a living `population/economy` that
-   grows when served well (high rep, short waits, enough capacity) and stagnates/shrinks when
-   not. Reputation is already ~80% of the needed input. This is the biggest *fun* unlock and
-   gives long-horizon goals.
+**Explicitly deferred:** onboarding/tutorial (not until mechanics stabilize — no one to
+onboard yet and it would need constant rework); individual crew/captains (a coarse per-boat
+staffing tier comes first, likely alongside #5 or after #7); full 3D.
 
-4. Then: maintenance/breakdowns (vessel age) → crew/captains → research + advertising →
-   terminal amenities + community identity → events/weather/seasons.
+**Locked-in engineering item (do during #3):** `Panel.updateHud` runs dozens of
+`document.querySelector` calls per frame (`src/ui/panel.ts`) — cache element references once
+at build time. Free battery on mobile.
 
-**Suggested next session:** do #1 and #2 together (they're small and interlocking), then make
-#3 the following milestone.
+## Model-level notes (observed 2026-07-01, not yet scheduled)
+
+- **Transfer fare/rep asymmetry:** fares and rep are both credited at *boarding*, so a rider
+  stranded at the hub mid-journey already paid for leg 1, and their balk penalizes the hub's
+  rep rather than the route that sold the false promise. Acceptable for v1; when the
+  network-legibility UI lands, consider crediting rep on *delivery*.
+- **Freight realism:** `avgOccupancy` (2.0) applies to freight too — trucks count 2 people
+  and pay car fare. Decided direction (now in GDD): trucks occupy several car slots and pay
+  their own fare. Fold in with #4 or #7.
+- **Balked demand evaporates.** Consider having a fraction retry the next day with reduced
+  patience, so chronic underservice compounds visibly once unmet demand is surfaced.
 
 ---
 
