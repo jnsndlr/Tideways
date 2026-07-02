@@ -6,13 +6,17 @@ import {
   createState,
   advance,
   addBoat,
-  addTrip,
+  addRoundTrip,
   dailyODByPair,
   earliestFreeSlot,
   seasonOf,
   weekdayName,
 } from "../src/sim";
 import type { GameState } from "../src/types";
+
+// Calibration needs determinism: wear still accrues, but random breakdowns are
+// pinned off so two runs of the report are comparable.
+CONFIG.maint.breakdownMaxPerSailing = 0;
 
 const n = (x: number) => Math.round(x).toLocaleString();
 const pct = (x: number) => (x * 100).toFixed(1) + "%";
@@ -65,11 +69,13 @@ function reportOperations(days: number): void {
   // one dedicated Hiyu per starting island, each packed with round trips
   const routes = ["r-lopez", "r-orcas", "r-friday"];
   const boats = [state.boats[0], addBoat(state, "hiyu"), addBoat(state, "hiyu")];
+  const base = state.sheets[0];
   boats.forEach((boat, i) => {
     while (true) {
-      const slot = earliestFreeSlot(boat, routes[i], state.routes);
+      const legs = base.legs[boat.id] ?? [];
+      const slot = earliestFreeSlot(legs, routes[i], boat.classId, state.routes);
       if (slot === null) break;
-      addTrip(state, boat, routes[i], slot);
+      addRoundTrip(state, base, boat, routes[i], slot);
     }
   });
 

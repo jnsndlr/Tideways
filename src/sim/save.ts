@@ -1,13 +1,26 @@
-import { CONFIG } from "../config";
-import type { Boat, BoatPhase, GameState, PortQueues, RouteDef, Trip } from "../types";
+import { CONFIG, vesselById } from "../config";
+import type {
+  Boat,
+  BoatPhase,
+  GameState,
+  Leg,
+  Plan,
+  PortQueues,
+  RouteDef,
+  Sheet,
+  SheetDayType,
+} from "../types";
 import { createState } from "./state";
 
 // Save/load: the sim state is (almost) plain data, so a save is a JSON
 // projection of GameState with the CONFIG-owned `def` objects stripped out and
 // re-attached on load. serialize/deserialize are pure (node-safe for tests);
 // the localStorage wrappers below are what the app uses.
+//
+// v2 (sheets + legs) still loads v1 saves: old round-trip itineraries are
+// migrated into the base sheet as leg pairs; mid-crossing boats reset to idle.
 
-const SAVE_VERSION = 1;
+const SAVE_VERSION = 2;
 const SAVE_KEY = "tideways.save";
 
 interface PortSave {
@@ -19,6 +32,13 @@ interface PortSave {
   balkedYesterday: number;
   segRep: Record<string, number>;
   segDemandRep: Record<string, number>;
+  // living community (absent in pre-growth saves -> seeded defaults)
+  pop?: Record<string, number>;
+  draw?: Record<string, number>;
+  segServedWeek?: Record<string, number>;
+  segBalkedWeek?: Record<string, number>;
+  seatsWeek?: number;
+  segGrowth?: Record<string, number>;
 }
 
 interface RouteSave {
@@ -27,6 +47,22 @@ interface RouteSave {
   carPrice: number;
   sailingsToday: number;
   sailingsYesterday: number;
+}
+
+interface SheetSave {
+  id: number;
+  name: string;
+  dayType: SheetDayType;
+  season: string;
+  legs: Record<string, Leg[]>;
+  plans: Plan[];
+}
+
+// v1 boats carried their timetable as round trips
+interface TripV1 {
+  id: number;
+  routeId: string;
+  depart: number;
 }
 
 interface SaveData {
@@ -38,17 +74,23 @@ interface SaveData {
   companyValue: number;
   fuelToday: number;
   crewToday: number;
+  maintToday?: number;
   revenueToday: number;
   fuelYesterday: number;
   crewYesterday: number;
+  maintYesterday?: number;
   revenueYesterday: number;
   daysInDebt: number;
   gameOver: boolean;
   boatCounter: number;
-  tripCounter: number;
+  tripCounter?: number; // v1
+  legCounter?: number;
+  sheetCounter?: number;
+  planCounter?: number;
   ports: Record<string, PortSave>;
   routes: Record<string, RouteSave>;
-  boats: Boat[];
+  boats: (Boat & { itinerary?: TripV1[]; nextTripIdx?: number })[];
+  sheets?: SheetSave[];
 }
 
 export function serialize(state: GameState): string {
@@ -64,6 +106,12 @@ export function serialize(state: GameState): string {
       balkedYesterday: P.balkedYesterday,
       segRep: P.segRep,
       segDemandRep: P.segDemandRep,
+      pop: P.pop,
+      draw: P.draw,
+      segServedWeek: P.segServedWeek,
+      segBalkedWeek: P.segBalkedWeek,
+      seatsWeek: P.seatsWeek,
+      segGrowth: P.segGrowth,
     };
   }
   const routes: Record<string, RouteSave> = {};
@@ -86,17 +134,29 @@ export function serialize(state: GameState): string {
     companyValue: state.companyValue,
     fuelToday: state.fuelToday,
     crewToday: state.crewToday,
+    maintToday: state.maintToday,
     revenueToday: state.revenueToday,
     fuelYesterday: state.fuelYesterday,
     crewYesterday: state.crewYesterday,
+    maintYesterday: state.maintYesterday,
     revenueYesterday: state.revenueYesterday,
     daysInDebt: state.daysInDebt,
     gameOver: state.gameOver,
     boatCounter: state.boatCounter,
-    tripCounter: state.tripCounter,
+    legCounter: state.legCounter,
+    sheetCounter: state.sheetCounter,
+    planCounter: state.planCounter,
     ports,
     routes,
     boats: state.boats,
+    sheets: state.sheets.map((s) => ({
+      id: s.id,
+      name: s.name,
+      dayType: s.dayType,
+      season: s.season,
+      legs: s.legs,
+      plans: s.plans,
+    })),
   };
   return JSON.stringify(data);
 }
@@ -106,7 +166,30 @@ const num = (v: unknown, fallback: number): number =>
 
 const isSeg = (id: string): boolean => CONFIG.segments.some((s) => s.id === id);
 
-const PHASES: BoatPhase[] = ["idle", "atHome", "out", "hold", "atFar", "back"];
+const PHASES: BoatPhase[] = ["idle", "atPort", "sailing", "maint", "repair"];
+
+const DAY_TYPES: SheetDayType[] = ["any", "weekday", "weekend"];
+
+const isSeasonOrAny = (s: unknown): s is string =>
+  s === "any" || CONFIG.calendar.seasons.some((x) => x.id === s);
+
+/** Rebuild one leg from untrusted data (route must exist, `from` one of its ends). */
+function cleanLeg(state: GameState, raw: unknown): Leg | null {
+  const l = raw as Partial<Leg> | null;
+  if (!l || typeof l.routeId !== "string") return null;
+  const R = state.routes[l.routeId];
+  if (!R) return null;
+  const from = typeof l.from === "string" ? l.from : "";
+  if (from !== R.def.from && from !== R.def.to) return null;
+  const leg: Leg = {
+    id: Math.max(1, Math.round(num(l.id, 0))),
+    routeId: l.routeId,
+    from,
+    depart: Math.max(0, Math.min(1439, num(l.depart, CONFIG.operatingStart))),
+  };
+  if (typeof l.planId === "number" && Number.isFinite(l.planId)) leg.planId = l.planId;
+  return leg;
+}
 
 /** Rebuild a PortQueues from untrusted data, dropping unknown ports/segments. */
 function cleanQueues(src: unknown, state: GameState): PortQueues {
@@ -138,13 +221,41 @@ function mergeSegMap(fresh: Record<string, number>, saved: unknown): void {
   }
 }
 
+/** Merge saved per-segment values with an explicit clamp range. */
+function mergeSegRange(fresh: Record<string, number>, saved: unknown, lo: number, hi: number): void {
+  if (!saved || typeof saved !== "object") return;
+  for (const segId in saved as Record<string, unknown>) {
+    if (!isSeg(segId)) continue;
+    fresh[segId] = Math.max(lo, Math.min(hi, num((saved as Record<string, unknown>)[segId], fresh[segId])));
+  }
+}
+
+/** Same, but clamped per segment against a reference map (for living pop/draw,
+ *  which must stay within the growth band around the seeded values). */
+function mergeSegScaled(
+  fresh: Record<string, number>,
+  saved: unknown,
+  seed: Record<string, number>,
+  loFactor: number,
+  hiFactor: number,
+): void {
+  if (!saved || typeof saved !== "object") return;
+  for (const segId in saved as Record<string, unknown>) {
+    if (!isSeg(segId)) continue;
+    const s = seed[segId] ?? 0;
+    const v = num((saved as Record<string, unknown>)[segId], fresh[segId]);
+    fresh[segId] = Math.max(s * loFactor, Math.min(s * hiFactor, v));
+  }
+}
+
 /** Restore a GameState from a save string, or null if it can't be trusted.
  *  Starts from a fresh createState() so CONFIG-owned defs and any newly added
  *  ports/routes/segments come in at defaults, then overlays the saved data. */
 export function deserialize(raw: string): GameState | null {
   try {
     const d = JSON.parse(raw) as SaveData;
-    if (!d || d.v !== SAVE_VERSION) return null;
+    if (!d || (d.v !== 1 && d.v !== SAVE_VERSION)) return null;
+    const v1 = d.v === 1;
 
     const state = createState();
     state.boats = []; // drop the starter boat; the save has the real fleet
@@ -156,9 +267,11 @@ export function deserialize(raw: string): GameState | null {
     state.companyValue = num(d.companyValue, state.cash);
     state.fuelToday = num(d.fuelToday, 0);
     state.crewToday = num(d.crewToday, 0); // absent in pre-crew saves -> 0
+    state.maintToday = num(d.maintToday, 0); // absent in pre-maint saves -> 0
     state.revenueToday = num(d.revenueToday, 0);
     state.fuelYesterday = num(d.fuelYesterday, 0);
     state.crewYesterday = num(d.crewYesterday, 0);
+    state.maintYesterday = num(d.maintYesterday, 0);
     state.revenueYesterday = num(d.revenueYesterday, 0);
     state.daysInDebt = Math.max(0, Math.round(num(d.daysInDebt, 0)));
     state.gameOver = d.gameOver === true;
@@ -179,6 +292,13 @@ export function deserialize(raw: string): GameState | null {
       P.balkedYesterday = Math.max(0, num(sp.balkedYesterday, 0));
       mergeSegMap(P.segRep, sp.segRep);
       mergeSegMap(P.segDemandRep, sp.segDemandRep);
+      const gw = CONFIG.growth;
+      mergeSegScaled(P.pop, sp.pop, P.def.pop, gw.minFactor, gw.maxFactor);
+      mergeSegScaled(P.draw, sp.draw, P.def.draw, gw.minFactor, gw.maxFactor);
+      mergeSegRange(P.segServedWeek, sp.segServedWeek, 0, Infinity);
+      mergeSegRange(P.segBalkedWeek, sp.segBalkedWeek, 0, Infinity);
+      mergeSegRange(P.segGrowth, sp.segGrowth, -1, 1);
+      P.seatsWeek = Math.max(0, num(sp.seatsWeek, 0));
     }
 
     for (const id in d.routes ?? {}) {
@@ -212,19 +332,118 @@ export function deserialize(raw: string): GameState | null {
       R.sailingsYesterday = Math.max(0, num(sr.sailingsYesterday, 0));
     }
 
+    // ---- sheets (v2) --------------------------------------------------------
+    if (!v1 && Array.isArray(d.sheets)) {
+      const sheets: Sheet[] = [];
+      for (const ss of d.sheets) {
+        if (!ss || typeof ss !== "object") continue;
+        const legs: Record<number, Leg[]> = {};
+        if (ss.legs && typeof ss.legs === "object") {
+          for (const key in ss.legs) {
+            const boatId = Math.round(Number(key));
+            if (!Number.isFinite(boatId) || boatId <= 0) continue;
+            const out: Leg[] = [];
+            for (const rl of Array.isArray(ss.legs[key]) ? ss.legs[key] : []) {
+              const leg = cleanLeg(state, rl);
+              if (leg) out.push(leg);
+            }
+            out.sort((a, b) => a.depart - b.depart);
+            if (out.length) legs[boatId] = out;
+          }
+        }
+        const plans: Plan[] = [];
+        for (const rp of Array.isArray(ss.plans) ? ss.plans : []) {
+          if (!rp || typeof rp !== "object") continue;
+          const stops = (Array.isArray(rp.stops) ? rp.stops : []).filter(
+            (p): p is string => typeof p === "string" && !!state.ports[p],
+          );
+          if (stops.length < 2) continue;
+          plans.push({
+            id: Math.max(1, Math.round(num(rp.id, 0))),
+            name: typeof rp.name === "string" && rp.name ? rp.name : "Plan",
+            stops,
+            headwayMin: Math.max(CONFIG.scheduleSnapMin, Math.round(num(rp.headwayMin, 60))),
+            winStart: Math.max(0, Math.min(1439, num(rp.winStart, CONFIG.operatingStart))),
+            winEnd: Math.max(0, Math.min(1439, num(rp.winEnd, CONFIG.operatingEnd))),
+            boatIds: (Array.isArray(rp.boatIds) ? rp.boatIds : [])
+              .map((x: unknown) => Math.round(num(x, 0)))
+              .filter((x: number) => x > 0),
+          });
+        }
+        sheets.push({
+          id: Math.max(1, Math.round(num(ss.id, 0))),
+          name: typeof ss.name === "string" && ss.name ? ss.name : "Schedule",
+          dayType: DAY_TYPES.includes(ss.dayType) ? ss.dayType : "any",
+          season: isSeasonOrAny(ss.season) ? ss.season : "any",
+          legs,
+          plans,
+        });
+      }
+      if (sheets.length) {
+        sheets[0].dayType = "any"; // the base sheet must cover every day
+        sheets[0].season = "any";
+        state.sheets = sheets;
+      }
+    }
+
+    // ---- boats ----------------------------------------------------------------
     let maxBoatId = 0;
-    let maxTripId = 0;
     for (const sb of d.boats ?? []) {
       if (!sb || !CONFIG.vesselClasses.some((v) => v.id === sb.classId)) continue;
-      const itinerary: Trip[] = (Array.isArray(sb.itinerary) ? sb.itinerary : [])
-        .filter((t) => t && state.routes[t.routeId])
-        .map((t) => ({ id: Math.round(num(t.id, 0)), routeId: t.routeId, depart: num(t.depart, CONFIG.operatingStart) }))
-        .sort((a, b) => a.depart - b.depart);
-      for (const t of itinerary) maxTripId = Math.max(maxTripId, t.id);
+      const id = Math.max(1, Math.round(num(sb.id, 0)));
+      maxBoatId = Math.max(maxBoatId, id);
+
+      // v1 migration: round-trip itineraries become leg pairs on the base sheet;
+      // mid-crossing state is dropped (the boat restarts idle, riders vanish once)
+      if (v1) {
+        const base = state.sheets[0];
+        for (const t of Array.isArray(sb.itinerary) ? sb.itinerary : []) {
+          if (!t || !state.routes[t.routeId]) continue;
+          const R = state.routes[t.routeId];
+          const dep = Math.max(0, Math.min(1439, num(t.depart, CONFIG.operatingStart)));
+          state.legCounter++;
+          (base.legs[id] ??= []).push({ id: state.legCounter, routeId: t.routeId, from: R.def.from, depart: dep });
+          state.legCounter++;
+          base.legs[id].push({
+            id: state.legCounter,
+            routeId: t.routeId,
+            from: R.def.to,
+            depart: dep + CONFIG.loadMinutes + Math.ceil(R.def.crossingMin / vesselById(sb.classId).speedFactor),
+          });
+        }
+        base.legs[id]?.sort((a, b) => a.depart - b.depart);
+        const migrated = base.legs[id] ?? [];
+        state.boats.push({
+          id,
+          name: typeof sb.name === "string" && sb.name ? sb.name : "Ferry " + id,
+          classId: sb.classId,
+          legIdx: migrated.filter((l) => l.depart < state.clock).length,
+          phase: "idle",
+          routeId: null,
+          sailFrom: null,
+          atPort: null,
+          lastPort: state.hubId,
+          p: 0,
+          timer: 0,
+          cargo: {},
+          pax: { foot: 0, car: 0 },
+          tripLate: false,
+          condition: Math.max(0, Math.min(100, num(sb.condition, 100))),
+          limping: false,
+          serviceRequested: sb.serviceRequested === true,
+          downMin: 0,
+        });
+        continue;
+      }
 
       const phase: BoatPhase = PHASES.includes(sb.phase) ? sb.phase : "idle";
-      const routeOk = typeof sb.routeId === "string" && !!state.routes[sb.routeId];
-      const active = phase !== "idle" && routeOk;
+      const atPortOk = typeof sb.atPort === "string" && !!state.ports[sb.atPort];
+      const inYard = (phase === "maint" || phase === "repair") && atPortOk;
+      const R = typeof sb.routeId === "string" ? state.routes[sb.routeId] : undefined;
+      const sailFromOk =
+        !!R && typeof sb.sailFrom === "string" &&
+        (sb.sailFrom === R.def.from || sb.sailFrom === R.def.to);
+      const active = !inYard && (phase === "sailing" || phase === "atPort") && sailFromOk;
       const cargo = active ? cleanQueues(sb.cargo, state) : {};
       let foot = 0;
       let car = 0;
@@ -234,26 +453,56 @@ export function deserialize(raw: string): GameState | null {
           car += cargo[dest][seg].car;
         }
 
-      const id = Math.max(1, Math.round(num(sb.id, 0)));
-      maxBoatId = Math.max(maxBoatId, id);
       state.boats.push({
         id,
         name: typeof sb.name === "string" && sb.name ? sb.name : "Ferry " + id,
         classId: sb.classId,
-        itinerary,
-        nextTripIdx: Math.max(0, Math.min(itinerary.length, Math.round(num(sb.nextTripIdx, 0)))),
-        phase: active ? phase : "idle",
+        legIdx: Math.max(0, Math.min(999, Math.round(num(sb.legIdx, 0)))),
+        phase: active || inYard ? phase : "idle",
         routeId: active ? sb.routeId : null,
-        atPort: active && typeof sb.atPort === "string" && state.ports[sb.atPort] ? sb.atPort : null,
+        sailFrom: active ? (sb.sailFrom as string) : null,
+        atPort: (phase === "atPort" && active) || inYard ? (atPortOk ? sb.atPort : null) : null,
+        lastPort:
+          typeof sb.lastPort === "string" && state.ports[sb.lastPort] ? sb.lastPort : state.hubId,
         p: Math.max(0, Math.min(1, num(sb.p, 0))),
         timer: Math.max(0, num(sb.timer, 0)),
         cargo,
         pax: { foot, car },
         tripLate: sb.tripLate === true,
+        condition: Math.max(0, Math.min(100, num(sb.condition, 100))),
+        limping: active && sb.limping === true,
+        serviceRequested: sb.serviceRequested === true,
+        downMin: inYard ? Math.max(0, num(sb.downMin, 0)) : 0,
       });
     }
+
+    // prune sheet data for boats that no longer exist
+    for (const sheet of state.sheets) {
+      for (const key in sheet.legs) {
+        if (!state.boats.some((b) => b.id === Number(key))) delete sheet.legs[key];
+      }
+      for (const plan of sheet.plans)
+        plan.boatIds = plan.boatIds.filter((x) => state.boats.some((b) => b.id === x));
+    }
+
+    // counters can never trail the ids in play
+    let maxLegId = 0;
+    let maxPlanId = 0;
+    let maxSheetId = 1;
+    for (const sheet of state.sheets) {
+      maxSheetId = Math.max(maxSheetId, sheet.id);
+      for (const plan of sheet.plans) maxPlanId = Math.max(maxPlanId, plan.id);
+      for (const key in sheet.legs)
+        for (const leg of sheet.legs[key]) maxLegId = Math.max(maxLegId, leg.id);
+    }
     state.boatCounter = Math.max(Math.round(num(d.boatCounter, 0)), maxBoatId);
-    state.tripCounter = Math.max(Math.round(num(d.tripCounter, 0)), maxTripId);
+    state.legCounter = Math.max(
+      Math.round(num(d.legCounter, num(d.tripCounter, 0))),
+      maxLegId,
+      state.legCounter,
+    );
+    state.sheetCounter = Math.max(Math.round(num(d.sheetCounter, 1)), maxSheetId);
+    state.planCounter = Math.max(Math.round(num(d.planCounter, 0)), maxPlanId);
 
     return state;
   } catch {
@@ -263,7 +512,13 @@ export function deserialize(raw: string): GameState | null {
 
 // ---- localStorage wrappers (no-ops when storage is unavailable) -------------
 
+// Once a save is cleared for a fresh start, block further autosaves: reloading
+// fires pagehide/visibilitychange, whose autosave would otherwise immediately
+// re-persist the abandoned company and defeat "Start a new company".
+let autosaveBlocked = false;
+
 export function saveGame(state: GameState): void {
+  if (autosaveBlocked) return;
   try {
     localStorage.setItem(SAVE_KEY, serialize(state));
   } catch {
@@ -281,6 +536,7 @@ export function loadGame(): GameState | null {
 }
 
 export function clearSave(): void {
+  autosaveBlocked = true; // callers reload right after; don't let pagehide re-save
   try {
     localStorage.removeItem(SAVE_KEY);
   } catch {

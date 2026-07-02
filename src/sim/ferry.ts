@@ -1,7 +1,14 @@
 import { CONFIG, vesselById } from "../config";
 import type { Boat, GameState, PortQueues, RouteState } from "../types";
+import { beginRepair, beginService, breakdownChance } from "./maintenance";
 import { crossingFor } from "./schedule";
 import { getRouting } from "./routing";
+import { todaysLegs } from "./sheets";
+
+/** The opposite end of a route from `port`. */
+export function otherEnd(R: RouteState, port: string): string {
+  return R.def.from === port ? R.def.to : R.def.from;
+}
 
 /** Total people currently aboard (foot + people-in-cars). */
 function manifestPeople(cargo: PortQueues): { foot: number; car: number } {
@@ -31,6 +38,9 @@ export function boardAt(state: GameState, boat: Boat, port: string, next: string
   const occ = CONFIG.avgOccupancy;
   const P = state.ports[port];
   const routing = getRouting(state);
+  // capacity offered from this port this week (growth headroom) — counted even
+  // when nobody boards: an empty departure is still service on offer
+  P.seatsWeek += vc.peopleCap;
 
   // Eligible buckets: those at this port whose next hop toward dest is `next`.
   const eligible: { dest: string; seg: string }[] = [];
@@ -74,6 +84,7 @@ export function boardAt(state: GameState, boat: Boat, port: string, next: string
 
     const served = takeFoot + takeCar * occ;
     boardedPeople += served;
+    P.segServedWeek[seg] += served;
     revenue += takeFoot * R.footPrice + takeCar * R.carPrice;
     // serving a segment well credits its goodwill at this port — but a late
     // sailing carries riders without earning any
@@ -109,106 +120,113 @@ export function arriveAt(state: GameState, boat: Boat, port: string): void {
   refreshPax(boat);
 }
 
-/** Costs of one departure: fuel for the crossing + the sailing's crew wages. */
+/** Costs of one departure: fuel for the crossing + the sailing's crew wages.
+ *  Also wears the hull down and rolls the sailing's breakdown die — a boat
+ *  that fails limps across at half speed and goes straight into the yard. */
 export function chargeSailing(state: GameState, boat: Boat, R: RouteState): void {
   const vc = vesselById(boat.classId);
   const fuel = R.def.distanceNm * vc.fuelPerNm;
   state.cash -= fuel + vc.crewPerSailing;
   state.fuelToday += fuel;
   state.crewToday += vc.crewPerSailing;
+  boat.condition = Math.max(0, boat.condition - R.def.distanceNm * CONFIG.maint.wearPerNm);
+  boat.limping = Math.random() < breakdownChance(boat.condition);
 }
 
-/** Boats currently occupying a berth at a port (loading). */
-function portBerthsBusy(state: GameState, portId: string): number {
+/** Boats currently occupying a berth at a port (loading or in the yard —
+ *  a dead boat under repair hogs the dock, which is part of the pain). */
+export function portBerthsBusy(state: GameState, portId: string): number {
   let n = 0;
   for (const b of state.boats)
-    if (b.atPort === portId && (b.phase === "atHome" || b.phase === "atFar")) n++;
+    if (
+      b.atPort === portId &&
+      (b.phase === "atPort" || b.phase === "maint" || b.phase === "repair")
+    )
+      n++;
   return n;
 }
 
-/** Advance one boat along its daily itinerary. A trip is a round trip on a leg:
- *  from -> to -> from, boarding by next-hop and unloading (deliver/transfer) at
- *  each end. */
+/** Advance one boat through today's legs (from the active sheet). Each leg:
+ *  wait for its slot and a berth at `from`, dwell/board, sail to the other
+ *  end, deliver/transfer, move to the next leg. Multi-stop loops are just
+ *  consecutive legs whose `from` is the previous arrival. */
 export function stepBoat(state: GameState, boat: Boat, dtMin: number): void {
   const open =
     state.clock >= CONFIG.operatingStart && state.clock < CONFIG.operatingEnd;
 
   switch (boat.phase) {
     case "idle": {
-      const trip = boat.itinerary[boat.nextTripIdx];
-      if (!trip || !open) return; // done for the day, or closed
-      const R = state.routes[trip.routeId];
-      if (state.clock >= trip.depart) {
-        // hold at the dock until a home berth frees up
-        if (portBerthsBusy(state, R.def.from) >= state.ports[R.def.from].slips.length) return;
-        boat.routeId = trip.routeId;
-        boat.atPort = R.def.from;
-        boat.phase = "atHome";
+      // a queued overhaul takes priority over the timetable — that's the
+      // planning decision: the boat is out of service while the yard has it
+      if (boat.serviceRequested) {
+        const hub = state.ports[state.hubId];
+        if (portBerthsBusy(state, state.hubId) < hub.slips.length) beginService(state, boat);
+        return;
+      }
+      const legs = todaysLegs(state, boat);
+      const leg = legs[boat.legIdx];
+      if (!leg || !open) return; // done for the day, or closed
+      const R = state.routes[leg.routeId];
+      if (!R || (leg.from !== R.def.from && leg.from !== R.def.to)) {
+        boat.legIdx++; // stale leg (route or port gone) — skip it
+        return;
+      }
+      if (state.clock >= leg.depart) {
+        // hold offshore until a berth frees up at the departure port
+        if (portBerthsBusy(state, leg.from) >= state.ports[leg.from].slips.length) return;
+        boat.routeId = leg.routeId;
+        boat.sailFrom = leg.from;
+        boat.atPort = leg.from;
+        boat.phase = "atPort";
         boat.timer = 0;
-        boat.tripLate = state.clock - trip.depart > CONFIG.lateGraceMin;
+        boat.tripLate = state.clock - leg.depart > CONFIG.lateGraceMin;
       }
       break;
     }
-    case "atHome": {
+    case "atPort": {
       const R = state.routes[boat.routeId!];
       boat.timer += dtMin;
       if (boat.timer >= CONFIG.loadMinutes) {
-        boardAt(state, boat, R.def.from, R.def.to, R);
+        boardAt(state, boat, boat.sailFrom!, otherEnd(R, boat.sailFrom!), R);
         chargeSailing(state, boat, R);
         R.sailingsToday++;
-        boat.phase = "out";
+        boat.phase = "sailing";
         boat.atPort = null;
         boat.p = 0;
         boat.timer = 0;
       }
       break;
     }
-    case "out": {
+    case "sailing": {
       const R = state.routes[boat.routeId!];
-      boat.p += dtMin / crossingFor(R, boat.classId);
+      const limp = boat.limping ? CONFIG.maint.limpSpeedFactor : 1;
+      boat.p += (dtMin * limp) / crossingFor(R, boat.classId);
       if (boat.p >= 1) {
         boat.p = 1;
-        arriveAt(state, boat, R.def.to);
-        const free = portBerthsBusy(state, R.def.to) < state.ports[R.def.to].slips.length;
-        boat.phase = free ? "atFar" : "hold";
-        boat.atPort = free ? R.def.to : null;
-        boat.timer = 0;
-      }
-      break;
-    }
-    case "hold": {
-      const R = state.routes[boat.routeId!];
-      boat.timer += dtMin;
-      if (portBerthsBusy(state, R.def.to) < state.ports[R.def.to].slips.length) {
-        boat.phase = "atFar";
-        boat.atPort = R.def.to;
-        boat.timer = 0;
-      }
-      break;
-    }
-    case "atFar": {
-      const R = state.routes[boat.routeId!];
-      boat.timer += dtMin;
-      if (boat.timer >= CONFIG.loadMinutes) {
-        boardAt(state, boat, R.def.to, R.def.from, R);
-        chargeSailing(state, boat, R);
-        boat.phase = "back";
-        boat.atPort = null;
-        boat.p = 1;
-        boat.timer = 0;
-      }
-      break;
-    }
-    case "back": {
-      const R = state.routes[boat.routeId!];
-      boat.p -= dtMin / crossingFor(R, boat.classId);
-      if (boat.p <= 0) {
-        boat.p = 0;
-        arriveAt(state, boat, R.def.from);
+        const dest = otherEnd(R, boat.sailFrom!);
+        arriveAt(state, boat, dest);
+        boat.legIdx++;
+        boat.lastPort = dest;
+        if (boat.limping) {
+          beginRepair(state, boat, dest);
+          return;
+        }
         boat.phase = "idle";
         boat.routeId = null;
+        boat.sailFrom = null;
+      }
+      break;
+    }
+    case "maint":
+    case "repair": {
+      boat.timer += dtMin;
+      if (boat.timer >= boat.downMin) {
+        boat.condition = boat.phase === "maint" ? 100 : CONFIG.maint.repairRestoreTo;
+        boat.phase = "idle";
+        if (boat.atPort) boat.lastPort = boat.atPort;
         boat.atPort = null;
-        boat.nextTripIdx++;
+        boat.timer = 0;
+        boat.downMin = 0;
       }
       break;
     }

@@ -1,4 +1,5 @@
 import { CONFIG, vesselById } from "../config";
+import { portPopulation, townTier } from "../sim/growth";
 import { segWaiting } from "../sim/sim";
 import type { Boat, GameState, Vec2 } from "../types";
 
@@ -125,6 +126,7 @@ export class MapRenderer {
       this.drawTerminal(
         this.px(P.def.pos), P.def.name, isHub ? "#57b6e0" : P.def.color, isHub,
         docked ? P.rep : null, this.selected === pid, !docked, tier,
+        townTier(portPopulation(P)).rank,
       );
     }
 
@@ -161,9 +163,12 @@ export class MapRenderer {
   private drawTerminal(
     pt: Vec2, label: string, color: string, big: boolean,
     rep: number | null, selected: boolean, locked: boolean, berthTier: number,
+    townRank: number,
   ): void {
     const { ctx } = this;
-    const r = big ? 16 : 13;
+    // island footprint grows with its town tier — long-term investment is
+    // witnessed on the map, not just in the numbers
+    const r = big ? 17 : 10 + townRank * 1.5;
     ctx.save();
     if (locked) ctx.globalAlpha = 0.6;
     if (selected) {
@@ -257,34 +262,29 @@ export class MapRenderer {
 
   private drawBoat(state: GameState, boat: Boat): void {
     const vc = vesselById(boat.classId);
-    const hubPos = this.px(state.ports[state.hubId].def.pos);
     let pos: Vec2;
     let ang = 0;
 
-    if (boat.phase === "idle" || !boat.routeId) {
-      // idle boats rest at the hub, fanned out slightly so they're visible
-      pos = { x: hubPos.x + (boat.id % 2 === 0 ? 24 : -24), y: hubPos.y + 4 + Math.floor(boat.id / 2) * 6 };
+    if (boat.phase === "repair" && boat.atPort) {
+      // dead at the dock where it limped in
+      const dock = this.px(state.ports[boat.atPort].def.pos);
+      pos = { x: dock.x + 22, y: dock.y + 16 };
+    } else if (
+      boat.phase === "idle" || boat.phase === "maint" || !boat.routeId || !boat.sailFrom
+    ) {
+      // resting/yard boats sit where they last docked, fanned so they're visible
+      const at = this.px(state.ports[boat.atPort ?? boat.lastPort].def.pos);
+      pos = { x: at.x + (boat.id % 2 === 0 ? 24 : -24), y: at.y + 4 + Math.floor(boat.id / 2) * 6 };
     } else {
       const R = state.routes[boat.routeId].def;
-      const home = this.px(state.ports[R.from].def.pos);
-      const far = this.px(state.ports[R.to].def.pos);
-      if (boat.phase === "atHome") {
-        pos = home;
-        ang = Math.atan2(far.y - home.y, far.x - home.x);
-      } else if (boat.phase === "atFar") {
-        pos = far;
-        ang = Math.atan2(home.y - far.y, home.x - far.x);
-      } else if (boat.phase === "hold") {
-        // queued offshore short of the far dock, fanned so a backlog is visible
-        const h = 0.82 - (boat.id % 3) * 0.05;
-        pos = { x: home.x + (far.x - home.x) * h, y: home.y + (far.y - home.y) * h };
-        ang = Math.atan2(far.y - home.y, far.x - home.x);
-      } else {
-        const p = boat.p;
-        pos = { x: home.x + (far.x - home.x) * p, y: home.y + (far.y - home.y) * p };
-        const dir = boat.phase === "out" ? 1 : -1;
-        ang = Math.atan2((far.y - home.y) * dir, (far.x - home.x) * dir);
-      }
+      const destId = R.from === boat.sailFrom ? R.to : R.from;
+      const from = this.px(state.ports[boat.sailFrom].def.pos);
+      const to = this.px(state.ports[destId].def.pos);
+      ang = Math.atan2(to.y - from.y, to.x - from.x);
+      pos =
+        boat.phase === "atPort"
+          ? from
+          : { x: from.x + (to.x - from.x) * boat.p, y: from.y + (to.y - from.y) * boat.p };
     }
 
     const { ctx } = this;
@@ -293,7 +293,7 @@ export class MapRenderer {
     ctx.translate(pos.x, pos.y);
     ctx.rotate(ang);
     ctx.scale(sz, sz);
-    if (boat.phase === "out" || boat.phase === "back") {
+    if (boat.phase === "sailing") {
       ctx.fillStyle = "rgba(255,255,255,.10)";
       ctx.beginPath();
       ctx.moveTo(-10, -7);
@@ -313,6 +313,14 @@ export class MapRenderer {
     ctx.fillStyle = "#f4f1e8";
     ctx.fillRect(-8, -5, 12, 10);
     ctx.restore();
+
+    // yard stays (and a mid-crossing breakdown limp) get a wrench so a down
+    // boat is spottable at a glance
+    if (boat.phase === "maint" || boat.phase === "repair" || boat.limping) {
+      ctx.font = "12px -apple-system, sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("🔧", pos.x, pos.y - 12);
+    }
 
     if (boat.phase !== "idle") {
       const load = (boat.pax.foot + boat.pax.car * CONFIG.avgOccupancy) / vc.peopleCap;

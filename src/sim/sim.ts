@@ -1,7 +1,10 @@
 import { CONFIG, vesselById } from "../config";
 import type { GameState, PortState, SegmentDef } from "../types";
+import { weekdayIndex } from "./calendar";
 import { accrueDemand } from "./demand";
 import { stepBoat } from "./ferry";
+import { weeklyGrowthTick } from "./growth";
+import { sellPrice } from "./state";
 
 /** Per-segment balking: once a queue waits past that segment's patience, a
  *  trickle gives up and the origin port's reputation sours. */
@@ -24,6 +27,7 @@ function updatePortQueues(state: GameState, P: PortState, dtMin: number): void {
         q.car -= bCar;
         const lost = bFoot + bCar * CONFIG.avgOccupancy;
         P.balkedToday += lost;
+        P.segBalkedWeek[seg.id] += lost;
         P.segRep[seg.id] -= lost * CONFIG.repBalkLoss;
       }
     }
@@ -36,6 +40,9 @@ export function step(state: GameState, dtMin: number): void {
   if (state.clock >= 1440) {
     state.clock -= 1440;
     state.day++;
+    // rolling into a Monday closes the week: communities grow or shrink on
+    // how well the past week served them
+    if (weekdayIndex(state.day) === 0) weeklyGrowthTick(state);
     for (const id in state.ports) {
       const P = state.ports[id];
       for (const seg of CONFIG.segments) {
@@ -56,9 +63,11 @@ export function step(state: GameState, dtMin: number): void {
     }
     state.fuelYesterday = state.fuelToday;
     state.crewYesterday = state.crewToday;
+    state.maintYesterday = state.maintToday;
     state.revenueYesterday = state.revenueToday;
     state.fuelToday = 0;
     state.crewToday = 0;
+    state.maintToday = 0;
     state.revenueToday = 0;
 
     // moorage: the small fixed cost of owning each hull (idle boats are cheap
@@ -71,12 +80,14 @@ export function step(state: GameState, dtMin: number): void {
     state.daysInDebt = state.cash < 0 ? state.daysInDebt + 1 : 0;
     if (state.daysInDebt > CONFIG.economy.bankruptcyGraceDays) state.gameOver = true;
 
-    // new day: every boat restarts its daily itinerary
+    // new day: every boat restarts the day's legs — possibly from a different
+    // sheet now (weekend/season change). Yard stays and live crossings carry over.
     for (const b of state.boats) {
-      b.nextTripIdx = 0;
-      if (b.phase !== "out" && b.phase !== "back" && b.phase !== "atFar") {
+      b.legIdx = 0;
+      if (b.phase !== "sailing" && b.phase !== "maint" && b.phase !== "repair") {
         b.phase = "idle";
         b.routeId = null;
+        b.sailFrom = null;
         b.atPort = null;
       }
     }
@@ -106,9 +117,9 @@ export function step(state: GameState, dtMin: number): void {
   }
   state.rep = n ? sum / n : CONFIG.repNeutral;
 
-  // company value (HUD score): cash + resale value of the fleet
+  // company value (HUD score): cash + condition-scaled resale value of the fleet
   let resale = 0;
-  for (const b of state.boats) resale += vesselById(b.classId).cost * CONFIG.economy.resaleFactor;
+  for (const b of state.boats) resale += sellPrice(b);
   state.companyValue = state.cash + resale;
 }
 

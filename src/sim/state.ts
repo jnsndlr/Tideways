@@ -1,5 +1,6 @@
 import { CONFIG, HUB_ID, maxDockTier, nmBetween, vesselById, vesselRank } from "../config";
-import type { Boat, GameState, PortState, RouteDef, RouteState } from "../types";
+import type { Boat, GameState, Leg, PortState, RouteDef, RouteState, Sheet } from "../types";
+import { crossingFor } from "./schedule";
 
 function newSegReps(value: number): Record<string, number> {
   const r: Record<string, number> = {};
@@ -19,6 +20,12 @@ export function createState(): GameState {
     ports[def.id] = {
       def,
       queues: {},
+      pop: { ...def.pop },
+      draw: { ...def.draw },
+      segServedWeek: newSegReps(0),
+      segBalkedWeek: newSegReps(0),
+      seatsWeek: 0,
+      segGrowth: newSegReps(0),
       servedToday: 0,
       servedYesterday: 0,
       balkedToday: 0,
@@ -51,14 +58,19 @@ export function createState(): GameState {
     ports,
     routes,
     boats: [],
+    sheets: [{ id: 1, name: "Base", dayType: "any", season: "any", legs: {}, plans: [] }],
     boatCounter: 0,
-    tripCounter: 0,
+    legCounter: 0,
+    sheetCounter: 1,
+    planCounter: 0,
     hubId: HUB_ID,
     fuelToday: 0,
     crewToday: 0,
+    maintToday: 0,
     revenueToday: 0,
     fuelYesterday: 0,
     crewYesterday: 0,
+    maintYesterday: 0,
     revenueYesterday: 0,
     daysInDebt: 0,
     gameOver: false,
@@ -75,16 +87,21 @@ export function addBoat(state: GameState, classId: string): Boat {
     id: state.boatCounter,
     name: "Ferry " + state.boatCounter,
     classId,
-    itinerary: [],
-    nextTripIdx: 0,
+    legIdx: 0,
     phase: "idle",
     routeId: null,
+    sailFrom: null,
     atPort: null,
+    lastPort: state.hubId,
     p: 0,
     timer: 0,
     cargo: {},
     pax: { foot: 0, car: 0 },
     tripLate: false,
+    condition: 100,
+    limping: false,
+    serviceRequested: false,
+    downMin: 0,
   };
   state.boats.push(boat);
   return boat;
@@ -107,32 +124,105 @@ export function buyBoat(state: GameState, classId: string): Boat | null {
   return addBoat(state, classId);
 }
 
-/** What selling a hull returns (the resale share of its purchase price). */
-export function sellPrice(classId: string): number {
-  return vesselById(classId).cost * CONFIG.economy.resaleFactor;
+/** What selling a hull returns: the resale share of its purchase price, scaled
+ *  by condition — running a boat into the ground shows up in its price tag. */
+export function sellPrice(boat: Boat): number {
+  const floor = CONFIG.maint.resaleConditionFloor;
+  const conditionShare = floor + (1 - floor) * (boat.condition / 100);
+  return vesselById(boat.classId).cost * CONFIG.economy.resaleFactor * conditionShare;
 }
 
 /** Sell an owned vessel (must not be mid-operation). Frees its home berth and
- *  discards its timetable — this is the lever that makes seasonal fleet-sizing
- *  a real decision instead of a ratchet. */
+ *  discards its timetables (on every sheet) — this is the lever that makes
+ *  seasonal fleet-sizing a real decision instead of a ratchet. */
 export function sellBoat(state: GameState, boatId: number): boolean {
   const i = state.boats.findIndex((b) => b.id === boatId);
   if (i < 0) return false;
   if (state.boats[i].phase !== "idle") return false; // finish the crossing first
-  state.cash += sellPrice(state.boats[i].classId);
+  state.cash += sellPrice(state.boats[i]);
   state.boats.splice(i, 1);
+  for (const sheet of state.sheets) {
+    delete sheet.legs[boatId];
+    for (const plan of sheet.plans) plan.boatIds = plan.boatIds.filter((b) => b !== boatId);
+  }
   return true;
 }
 
-/** Add a trip (round trip on a route) to a boat's daily itinerary, sorted. */
-export function addTrip(state: GameState, boat: Boat, routeId: string, depart: number): void {
-  state.tripCounter++;
-  boat.itinerary.push({ id: state.tripCounter, routeId, depart });
-  boat.itinerary.sort((a, b) => a.depart - b.depart);
+// ---- Legs (scheduling) ------------------------------------------------------
+
+/** Add one leg (a single one-way sailing) to a boat's timetable on a sheet. */
+export function addLeg(
+  state: GameState,
+  sheet: Sheet,
+  boatId: number,
+  routeId: string,
+  from: string,
+  depart: number,
+  planId?: number,
+): Leg {
+  state.legCounter++;
+  const leg: Leg = { id: state.legCounter, routeId, from, depart };
+  if (planId !== undefined) leg.planId = planId;
+  const legs = (sheet.legs[boatId] ??= []);
+  legs.push(leg);
+  legs.sort((a, b) => a.depart - b.depart);
+  return leg;
 }
 
-export function removeTrip(boat: Boat, tripId: number): void {
-  boat.itinerary = boat.itinerary.filter((t) => t.id !== tripId);
+/** Add a classic round trip: an out leg from the route's home end, and the
+ *  back leg departing on arrival. What a manual timeline drag creates. */
+export function addRoundTrip(
+  state: GameState,
+  sheet: Sheet,
+  boat: Boat,
+  routeId: string,
+  depart: number,
+): [Leg, Leg] {
+  const R = state.routes[routeId];
+  const backDepart = depart + CONFIG.loadMinutes + Math.ceil(crossingFor(R, boat.classId));
+  return [
+    addLeg(state, sheet, boat.id, routeId, R.def.from, depart),
+    addLeg(state, sheet, boat.id, routeId, R.def.to, backDepart),
+  ];
+}
+
+/** Remove one leg. Hand-removing a plan-stamped leg detaches it from the plan
+ *  implicitly (the leg is simply gone; the plan re-stamps it on regenerate). */
+export function removeLeg(sheet: Sheet, boatId: number, legId: number): void {
+  const legs = sheet.legs[boatId];
+  if (legs) sheet.legs[boatId] = legs.filter((l) => l.id !== legId);
+}
+
+/** Retime a leg (timeline drag). A plan-stamped leg detaches: it becomes a
+ *  plain manual leg the plan no longer owns. */
+export function moveLeg(sheet: Sheet, boatId: number, legId: number, depart: number): void {
+  const legs = sheet.legs[boatId];
+  if (!legs) return;
+  const leg = legs.find((l) => l.id === legId);
+  if (!leg) return;
+  leg.depart = depart;
+  delete leg.planId;
+  legs.sort((a, b) => a.depart - b.depart);
+}
+
+/** Move a leg to another boat's lane (interlining drag). Detaches from plans. */
+export function transferLeg(
+  sheet: Sheet,
+  fromBoatId: number,
+  toBoatId: number,
+  legId: number,
+  depart: number,
+): void {
+  const src = sheet.legs[fromBoatId];
+  if (!src) return;
+  const leg = src.find((l) => l.id === legId);
+  if (!leg) return;
+  sheet.legs[fromBoatId] = src.filter((l) => l.id !== legId);
+  leg.depart = depart;
+  delete leg.planId;
+  const dst = (sheet.legs[toBoatId] ??= []);
+  dst.push(leg);
+  dst.sort((a, b) => a.depart - b.depart);
 }
 
 // ---- Ports & slips --------------------------------------------------------
@@ -195,12 +285,9 @@ export function upgradeSlip(state: GameState, portId: string, idx: number): bool
   return true;
 }
 
-// ---- Direct routes (Phase 2) ----------------------------------------------
-
-/** Cost to open a new direct route of this length. */
-export function openRouteCost(distanceNm: number): number {
-  return CONFIG.routeCfg.openBaseCost + CONFIG.routeCfg.openCostPerNm * distanceNm;
-}
+// ---- Direct routes ----------------------------------------------------------
+// Connecting two already-docked ports is free: the money gate is the docks
+// themselves. A route is just the drawn line that fares and legs hang off.
 
 /** Whether a direct route already exists between these two ports (either direction). */
 export function routeExistsBetween(state: GameState, a: string, b: string): boolean {
@@ -218,16 +305,13 @@ export function routeCandidates(state: GameState, portId: string): PortState[] {
   );
 }
 
-/** Open a new direct route between two already-docked ports. */
+/** Open (connect) a direct route between two already-docked ports — free. */
 export function openRoute(state: GameState, fromId: string, toId: string): RouteState | null {
   const a = state.ports[fromId];
   const b = state.ports[toId];
   if (!a?.slips.length || !b?.slips.length) return null;
   if (fromId === toId || routeExistsBetween(state, fromId, toId)) return null;
   const distanceNm = Math.round(nmBetween(a.def.pos, b.def.pos) * 10) / 10;
-  const cost = openRouteCost(distanceNm);
-  if (state.cash < cost) return null;
-  state.cash -= cost;
 
   const id = `r-${fromId}-${toId}`;
   const def: RouteDef = {
