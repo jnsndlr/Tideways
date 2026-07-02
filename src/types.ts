@@ -80,6 +80,14 @@ export type PortQueues = Record<string, Record<string, SegQueue>>; // destPortId
 export interface PortState {
   def: PortDef;
   queues: PortQueues;
+  // Living community: pop/draw start at def.pop/def.draw and move with the
+  // weekly growth tick — service quality is what makes a town grow or shrink.
+  pop: Record<string, number>; // living origin weight by segment
+  draw: Record<string, number>; // living destination appeal by segment
+  segServedWeek: Record<string, number>; // riders boarded here this week, per segment
+  segBalkedWeek: Record<string, number>; // riders who gave up here this week, per segment
+  seatsWeek: number; // people-capacity of every departure from here this week
+  segGrowth: Record<string, number>; // last weekly growth rate per segment (for UI trends)
   servedToday: number;
   servedYesterday: number;
   balkedToday: number;
@@ -99,29 +107,69 @@ export interface RouteState {
   carPrice: number;
 }
 
-export interface Trip {
+// A leg is ONE scheduled one-way sailing: dwell at `from` starting at `depart`,
+// then cross to the route's other end. Round trips are two legs; multi-stop
+// loops are chains of legs. Legs stamped by a service plan carry its planId —
+// hand-editing such a leg detaches it (planId cleared).
+export interface Leg {
   id: number;
   routeId: string;
-  depart: number; // in-game minute of scheduled departure from the route's home end
+  from: string; // departure port (one end of the route)
+  depart: number; // in-game minute the dwell/loading starts
+  planId?: number; // owning service plan, if generator-stamped
 }
 
-// "hold": arrived at a port but every slip is occupied — waiting offshore.
-export type BoatPhase = "idle" | "atHome" | "out" | "hold" | "atFar" | "back";
+// A service plan is the live object behind generated timetables: an ordered
+// stop list (2 stops = out-and-back, 3+ = loop that wraps), a service window,
+// a headway, and the boats that run it. Re-stamping regenerates its legs.
+export interface Plan {
+  id: number;
+  name: string;
+  stops: string[]; // ordered docked port ids
+  headwayMin: number;
+  winStart: number; // first departure (minute)
+  winEnd: number; // no departures after this minute
+  boatIds: number[];
+}
+
+export type SheetDayType = "any" | "weekday" | "weekend";
+
+// A schedule sheet is a complete named timetable (WSF-style: "Base",
+// "Winter weekends"). Exactly one sheet runs on any given day — the most
+// specific match on (dayType, season); ties go to the newest sheet. The first
+// sheet is the base (any/any) and can't be deleted.
+export interface Sheet {
+  id: number;
+  name: string;
+  dayType: SheetDayType;
+  season: string; // "any" or a season id
+  legs: Record<number, Leg[]>; // per boat id, sorted by depart
+  plans: Plan[];
+}
+
+// "maint": scheduled overhaul at the home port; "repair": emergency yard stay
+// after a breakdown, wherever the boat limped in — both occupy a berth.
+export type BoatPhase = "idle" | "atPort" | "sailing" | "maint" | "repair";
 
 export interface Boat {
   id: number;
   name: string;
   classId: string;
-  itinerary: Trip[]; // ordered daily timetable (repeats each day)
-  nextTripIdx: number; // pointer into itinerary for today
+  legIdx: number; // pointer into today's legs (from the active sheet)
   phase: BoatPhase;
-  routeId: string | null; // route of the active trip
+  routeId: string | null; // route of the active leg
+  sailFrom: string | null; // departure end of the active leg (direction)
   atPort: string | null; // port whose berth this boat occupies while loading (else null)
-  p: number; // 0..1 along the current crossing
-  timer: number; // minutes elapsed during a load (or held offshore)
+  lastPort: string; // where an idle boat physically sits (rendering + realism)
+  p: number; // 0..1 along the current crossing (sailFrom -> other end)
+  timer: number; // minutes elapsed during a load (or in the yard)
   cargo: PortQueues; // riders aboard, bucketed by final destination then segment
   pax: { foot: number; car: number }; // aggregate of cargo (for display)
-  tripLate: boolean; // the active trip departed past its scheduled slot — no goodwill earned
+  tripLate: boolean; // the active leg departed past its scheduled slot — no goodwill earned
+  condition: number; // 0..100 hull/machinery state; wears per nm sailed
+  limping: boolean; // broke down this crossing — half speed, yard stay on arrival
+  serviceRequested: boolean; // player queued a scheduled overhaul for the next idle moment
+  downMin: number; // total minutes of the current yard stay (maint/repair)
 }
 
 export interface GameState {
@@ -133,14 +181,19 @@ export interface GameState {
   ports: Record<string, PortState>;
   routes: Record<string, RouteState>;
   boats: Boat[];
+  sheets: Sheet[]; // sheets[0] is the base timetable (any/any, undeletable)
   boatCounter: number;
-  tripCounter: number;
+  legCounter: number;
+  sheetCounter: number;
+  planCounter: number;
   hubId: string; // id of the hub port (home berths live there)
   fuelToday: number; // fuel $ spent so far today (accumulates; reset at rollover)
   crewToday: number; // crew wages $ paid so far today (per departed sailing)
+  maintToday: number; // yard $ spent so far today (overhauls + emergency repairs)
   revenueToday: number; // fare $ taken so far today
   fuelYesterday: number; // previous full day's fuel spend (stable readout)
   crewYesterday: number; // previous full day's crew wages
+  maintYesterday: number; // previous full day's yard spend
   revenueYesterday: number; // previous full day's fare revenue
   daysInDebt: number; // consecutive day rollovers ending with cash < 0
   gameOver: boolean;

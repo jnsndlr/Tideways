@@ -3,15 +3,20 @@ import {
   addSlipCost,
   buyBlocker,
   clearSave,
-  openRouteCost,
+  conditionTier,
+  portPopulation,
   repFactor,
   routeCandidates,
   seasonOf,
   segWaiting,
   sellPrice,
+  serviceCost,
   slipUpgradeCost,
+  todaysLegs,
+  townTier,
   weekdayName,
 } from "../sim";
+import type { Boat } from "../types";
 import { repColor } from "../render/canvas";
 import type { GameState, PortState, RouteState } from "../types";
 
@@ -22,20 +27,24 @@ const clockStr = (m: number) =>
 const repLabel = (r: number) =>
   r < 40 ? "Poor" : r < 65 ? "Fair" : r < 80 ? "Good" : "Excellent";
 
-/** Sum of a port's per-segment origin weight — a stable "size" figure. */
-const portPopulation = (P: PortState): number =>
-  CONFIG.segments.reduce((a, g) => a + (P.def.pop[g.id] ?? 0), 0);
+/** Last week's growth as a compact trend badge (▲/▼, one decimal). */
+const growthBadge = (g: number): string =>
+  g > 0.0005 ? `▲${(g * 100).toFixed(1)}%` : g < -0.0005 ? `▼${(Math.abs(g) * 100).toFixed(1)}%` : "·";
+const growthColor = (g: number): string =>
+  g > 0.0005 ? "var(--good)" : g < -0.0005 ? "var(--bad)" : "var(--txt-dim)";
 
 export interface PanelCallbacks {
   onSetPrice: (routeId: string, kind: "foot" | "car", price: number) => void;
   onBuy: (classId: string) => void;
   onSell: (boatId: number) => void;
+  onService: (boatId: number) => void;
   onSpeed: (speed: number) => void;
   onBuildDock: (portId: string) => void;
   onAddSlip: (portId: string) => void;
   onUpgradeSlip: (portId: string, slipIdx: number) => void;
   onOpenRoute: (fromId: string, toId: string) => void;
   onPreviewRoute: (fromId: string | null, toId: string | null) => void;
+  onPlanService: (fromId: string, toId: string) => void;
 }
 
 /**
@@ -62,7 +71,12 @@ export class Panel {
   // cached company-tab refs (rebuilt with buildCompany / buildFleet)
   private co: Record<string, HTMLElement> = {};
   private buyBtns: { btn: HTMLButtonElement; classId: string }[] = [];
-  private sellBtns: { btn: HTMLButtonElement; boatId: number }[] = [];
+  private fleetRows: {
+    boatId: number;
+    cond: HTMLElement;
+    service: HTMLButtonElement;
+    sell: HTMLButtonElement;
+  }[] = [];
 
   // dock-sheet live elements, collected after each structural render
   private live = new Map<string, HTMLElement>();
@@ -123,6 +137,7 @@ export class Panel {
         <div><span>Fuel</span><b data-co="fuel">—</b></div>
         <div><span>Crew sailings</span><b data-co="crew">—</b></div>
         <div><span>Moorage</span><b data-co="moorage">—</b></div>
+        <div><span>Yard</span><b data-co="maint">—</b></div>
         <div class="co-net"><span>Net / day</span><b data-co="net">—</b></div>
       </div>`;
     this.co = {};
@@ -143,38 +158,76 @@ export class Panel {
     this.co.fuel.textContent = has ? signed(-s.fuelYesterday) : "—";
     this.co.crew.textContent = has ? signed(-s.crewYesterday) : "—";
     this.co.moorage.textContent = signed(-this.fleetMoorage());
+    this.co.maint.textContent = has ? signed(-s.maintYesterday) : "—";
     const net = this.dailyNet();
     this.co.net.textContent = net === null ? "—" : signed(net);
     this.co.net.style.color = net === null ? "" : net >= 0 ? "var(--good)" : "var(--bad)";
     for (const { btn, classId } of this.buyBtns)
       btn.disabled = buyBlocker(s, classId) !== null;
-    for (const { btn, boatId } of this.sellBtns) {
-      const b = s.boats.find((x) => x.id === boatId);
-      btn.disabled = !b || b.phase !== "idle";
+    for (const row of this.fleetRows) {
+      const b = s.boats.find((x) => x.id === row.boatId);
+      if (b) this.refreshFleetRow(b, row);
     }
+  }
+
+  /** Live half of a fleet row: condition, yard status, service + sell buttons. */
+  private refreshFleetRow(boat: Boat, row: { cond: HTMLElement; service: HTMLButtonElement; sell: HTMLButtonElement }): void {
+    const tier = conditionTier(boat.condition);
+    row.cond.textContent = `${Math.round(boat.condition)}% · ${tier.name}`;
+    row.cond.style.color = tier.color;
+    const inYard = boat.phase === "maint" || boat.phase === "repair";
+    if (inYard) {
+      const hoursLeft = Math.max(1, Math.ceil((boat.downMin - boat.timer) / 60));
+      row.service.textContent =
+        (boat.phase === "maint" ? "⚙️ In the yard" : "🔧 Breakdown repair") + ` · ${hoursLeft}h left`;
+      row.service.disabled = true;
+    } else if (boat.serviceRequested) {
+      row.service.textContent = "Service queued · tap to cancel";
+      row.service.disabled = false;
+    } else {
+      row.service.textContent = `Service · ${money(serviceCost(boat.classId))}`;
+      row.service.disabled = this.state.cash < serviceCost(boat.classId);
+    }
+    row.sell.textContent = `Sell ${money(sellPrice(boat))}`;
+    row.sell.disabled = boat.phase !== "idle";
   }
 
   // ---- fleet + buy menu ----------------------------------------------------
 
   buildFleet(): void {
     this.fleetEl.innerHTML = "";
-    this.sellBtns = [];
+    this.fleetRows = [];
     for (const boat of this.state.boats) {
       const vc = vesselById(boat.classId);
       const row = document.createElement("div");
       row.className = "fleet-row";
       row.innerHTML = `
-        <span class="fleet-name">⛴ ${boat.name}</span>
-        <span class="fleet-class">${vc.short}</span>
-        <span class="fleet-cap">${vc.peopleCap}p${vc.carCap ? " · " + vc.carCap + "🚗" : ""}</span>
-        <span class="fleet-trips">${boat.itinerary.length} trips</span>
-        <button class="fleet-sell">Sell ${money(sellPrice(boat.classId))}</button>`;
-      const btn = row.querySelector<HTMLButtonElement>(".fleet-sell")!;
-      btn.addEventListener("click", () => {
-        if (confirm(`Sell ${boat.name} for ${money(sellPrice(boat.classId))}? Its timetable is discarded.`))
+        <div class="fleet-top">
+          <span class="fleet-name">⛴ ${boat.name}</span>
+          <span class="fleet-class">${vc.short}</span>
+          <span class="fleet-cap">${vc.peopleCap}p${vc.carCap ? " · " + vc.carCap + "🚗" : ""}</span>
+          <span class="fleet-trips">${todaysLegs(this.state, boat).length} legs today</span>
+        </div>
+        <div class="fleet-bottom">
+          <span class="fleet-cond"></span>
+          <button class="fleet-service"></button>
+          <button class="fleet-sell"></button>
+        </div>`;
+      const service = row.querySelector<HTMLButtonElement>(".fleet-service")!;
+      service.addEventListener("click", () => this.cb.onService(boat.id));
+      const sell = row.querySelector<HTMLButtonElement>(".fleet-sell")!;
+      sell.addEventListener("click", () => {
+        if (confirm(`Sell ${boat.name} for ${money(sellPrice(boat))}? Its timetable is discarded.`))
           this.cb.onSell(boat.id);
       });
-      this.sellBtns.push({ btn, boatId: boat.id });
+      const entry = {
+        boatId: boat.id,
+        cond: row.querySelector<HTMLElement>(".fleet-cond")!,
+        service,
+        sell,
+      };
+      this.refreshFleetRow(boat, entry);
+      this.fleetRows.push(entry);
       this.fleetEl.appendChild(row);
     }
     this.buildBuyMenu();
@@ -286,6 +339,9 @@ export class Panel {
         .querySelector(".rc-open")
         ?.addEventListener("click", () => this.cb.onOpenRoute(id, to));
     });
+    this.detailEl.querySelectorAll<HTMLButtonElement>(".re-plan").forEach((b) => {
+      b.addEventListener("click", () => this.cb.onPlanService(id, b.dataset.to!));
+    });
     this.detailEl.querySelectorAll<HTMLButtonElement>("[data-pr]").forEach((b) => {
       const [routeId, kind, dir] = b.dataset.pr!.split(":") as [string, "foot" | "car", string];
       b.addEventListener("click", () => {
@@ -330,6 +386,22 @@ export class Panel {
       if (rep) rep.textContent = String(Math.round(sr));
       const wait = this.live.get(`segwait:${g.id}`);
       if (wait) wait.textContent = Math.round(sw[g.id]) + " waiting";
+      const grow = this.live.get(`seggrow:${g.id}`);
+      if (grow) {
+        grow.textContent = growthBadge(P.segGrowth[g.id]);
+        grow.style.color = growthColor(P.segGrowth[g.id]);
+      }
+    }
+    const town = this.live.get("town");
+    if (town) {
+      const tp = portPopulation(P);
+      town.textContent = `${townTier(tp).name} · ${Math.round(tp).toLocaleString()}`;
+    }
+    const trend = this.live.get("towntrend");
+    if (trend) {
+      const t = this.portTrend(P);
+      trend.textContent = growthBadge(t);
+      trend.style.color = growthColor(t);
     }
     const head = this.live.get("rep");
     if (head) {
@@ -342,18 +414,26 @@ export class Panel {
     if (balked) balked.textContent = Math.round(P.balkedYesterday).toLocaleString();
   }
 
+  /** Port-average growth from the last weekly tick (the sheet's headline trend). */
+  private portTrend(P: PortState): number {
+    return (
+      CONFIG.segments.reduce((a, g) => a + P.segGrowth[g.id], 0) / CONFIG.segments.length
+    );
+  }
+
   private fleetMoorage(): number {
     return this.state.boats.reduce((a, b) => a + vesselById(b.classId).moorageDaily, 0);
   }
 
-  /** Yesterday's full-day profit (revenue − fuel − crew − moorage), or null on
-   *  day 1 when no day has completed yet. */
+  /** Yesterday's full-day profit (revenue − fuel − crew − yard − moorage), or
+   *  null on day 1 when no day has completed yet. */
   private dailyNet(): number | null {
     if (this.state.day <= 1) return null;
     return (
       this.state.revenueYesterday -
       this.state.fuelYesterday -
       this.state.crewYesterday -
+      this.state.maintYesterday -
       this.fleetMoorage()
     );
   }
@@ -418,15 +498,18 @@ export class Panel {
   private openDockHtml(P: PortState): string {
     const sw = segWaiting(P);
     const turnout = Math.round(repFactor(P.demandRep) * 100);
+    const totalPop = portPopulation(P);
 
     const segs = CONFIG.segments
       .map((g) => {
         const sr = P.segRep[g.id];
+        const gr = P.segGrowth[g.id];
         return `<div class="dd-seg" style="border-color:${g.color}">
           <span>${g.icon} ${g.name}</span>
           <span class="dd-seg-meter"><i data-live="bar:${g.id}" style="width:${sr}%;background:${repColor(sr)}"></i></span>
           <b data-live="segrep:${g.id}">${Math.round(sr)}</b>
-          <em data-live="segwait:${g.id}">${Math.round(sw[g.id])} waiting</em></div>`;
+          <em data-live="segwait:${g.id}">${Math.round(sw[g.id])} waiting</em>
+          <i class="dd-grow" data-live="seggrow:${g.id}" style="color:${growthColor(gr)}">${growthBadge(gr)}</i></div>`;
       })
       .join("");
 
@@ -437,6 +520,8 @@ export class Panel {
       </div>
       <div class="dd-segs">${segs}</div>
       <div class="dd-rows">
+        <div><span>Town</span><b data-live="town">${townTier(totalPop).name} · ${Math.round(totalPop).toLocaleString()}</b></div>
+        <div><span>Last week</span><b data-live="towntrend" style="color:${growthColor(this.portTrend(P))}">${growthBadge(this.portTrend(P))}</b></div>
         <div><span>Turnout today</span><b data-live="turnout">${turnout}% of base</b></div>
         <div><span>Gave up yesterday</span><b data-live="balked">${Math.round(P.balkedYesterday).toLocaleString()}</b></div>
       </div>
@@ -466,6 +551,7 @@ export class Panel {
             <span class="dot" style="background:${R.def.color}"></span>
             <span class="re-name">→ ${other.def.name}</span>
             <em>${R.def.distanceNm} nm · ${R.def.crossingMin} min</em>
+            <button class="re-plan" data-to="${otherId}">Plan service</button>
           </div>
           <div class="price-row">${stepper(R, "foot")}${stepper(R, "car")}</div>
         </div>`;
@@ -477,12 +563,11 @@ export class Panel {
       .map((other) => {
         const dist = Math.round(nmBetween(P.def.pos, other.def.pos) * 10) / 10;
         const crossing = Math.round(dist * CONFIG.routeCfg.minPerNm);
-        const cost = openRouteCost(dist);
         return `<div class="route-cand" data-to="${other.def.id}">
           <span class="dot" style="background:${other.def.color}"></span>
           <span class="rc-name">${other.def.name}</span>
           <span class="rc-meta">${dist} nm · ${crossing} min</span>
-          <button class="rc-open" data-cost="${cost}">Open · ${money(cost)}</button></div>`;
+          <button class="rc-open">Connect</button></div>`;
       })
       .join("");
 
@@ -490,7 +575,7 @@ export class Panel {
       ${existing ? `<div class="dd-routes">${existing}</div>` : ""}
       ${
         candidates.length
-          ? `<div class="dd-routes-title">Open a new route</div>
+          ? `<div class="dd-routes-title">Connect another port — free</div>
              <div class="dd-route-candidates">${candRows}</div>`
           : ""
       }`;

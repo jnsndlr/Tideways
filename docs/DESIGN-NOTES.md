@@ -87,16 +87,70 @@ it's meant for. Stop and review after each milestone.
    (pause toggle + 1×/2×/4× cycle — four buttons didn't fit 375px); 44px touch targets;
    safe-area insets; company tab holds ledger/stats/fleet/buy. Perf item done: `updateHud`
    uses cached element refs only — no per-frame document-wide `querySelector`.
-4. **Community growth loop ("the heart").** Promote per-port `pop`/`draw` from static config
-   to living state; weekly growth tick driven by rep, served-ratio, and capacity headroom;
-   visible town tiers on the map. Per-segment growth doubles as the community-identity
-   mechanism later.
-5. **Maintenance / wear / breakdowns.** Wear per nm sailed → condition tiers → breakdown
-   risk. Scheduled maintenance takes the boat out of service for a block of hours at the home
-   port, colliding with the timetable — a planning decision, not a repair button.
-6. **Schedule generator.** ⚠️ Interaction design NOT locked yet — needs a dedicated
-   brainstorm before building (form-based? tap-a-pattern? something else). The 3a/3b split in
-   the routing plan below still describes the mechanical shape, but treat the UX as open.
+4. **Community growth loop ("the heart").** — DONE 2026-07-02. Per-port `pop`/`draw` are
+   living state (`PortState.pop/draw`, seeded from the static defs); a weekly tick
+   (`src/sim/growth.ts`, fired at each Monday rollover) adjusts them per segment from
+   quality = carried-ratio blended with reputation (`CONFIG.growth.repWeight`), with spare
+   seat capacity gating the upside — full boats stall growth until capacity is added.
+   Clamped to 0.5×–3× of seed. Locked islands stagnate. Town tiers (`CONFIG.townTiers`,
+   Outpost→Port City by total pop) scale the map marker; the port sheet shows
+   tier · population, a headline weekly trend, and per-segment ▲/▼ badges — per-segment
+   growth is the community-identity mechanism (tourist service grows tourist appeal).
+   Weekly counters (`segServedWeek`/`segBalkedWeek`/`seatsWeek`) + living pop persist in
+   saves (additive fields, old saves still load). A `window.__tideways` debug handle
+   (state/panel/advance) was added for devtools-driven verification.
+5. **Maintenance / wear / breakdowns.** — DONE 2026-07-02. `Boat.condition` (100→0) wears
+   per nm sailed (`CONFIG.maint.wearPerNm`, ~5 pts/day in heavy service); breakdown risk per
+   sailing is cubic in missing condition (`src/sim/maintenance.ts`) — Good boats almost never
+   fail, neglected ones become a gamble. A scheduled overhaul (`Service` button on the fleet
+   row) queues the boat into the yard at its next idle moment: 16h at the home port occupying
+   a berth, restores to 100 — the timetable collision IS the mechanic. A breakdown limps the
+   boat across at half speed, then 12h dead **in the arrival port's berth** (blocking other
+   arrivals — offshore holds), billed at 2× the overhaul rate and patched only to 70.
+   Resale + company value now scale with condition (floor 0.4), so running a hull into the
+   ground shows up in its price. Yard spend is a new ledger row (`maintToday/Yesterday`).
+   New boat phases `maint`/`repair` persist through saves and day rollovers.
+   `test/balance.ts` pins `breakdownMaxPerSailing = 0` so the calibration report stays
+   deterministic. Deferred to later milestones: vessel age, refits, coarse crew staffing tier.
+6. **Schedule generator / service plans + sheets + multi-stop lines.** — DONE 2026-07-02
+   (UX brainstormed with the user first; "service plan composer" concept chosen). Shipped as
+   one arc because the user pulled 3b (multi-stop) into the plan concept:
+   - **Legs, not trips** (the 3b simplification): `Leg {routeId, from, depart, planId?}` is
+     one one-way sailing; phases collapsed to idle | atPort | sailing (+ maint/repair).
+     Multi-stop loops are just consecutive legs. Manual timeline drags still stamp classic
+     round trips (two legs).
+   - **Schedule sheets** (`src/sim/sheets.ts`): named complete timetables with dayType
+     (any/weekday/weekend) + season selectors — WSF-style. Exactly one sheet runs per day:
+     most specific match, ties to newest; sheet 0 = Base (any/any, locked, undeletable).
+     An empty matching sheet = deliberate no-service day.
+   - **Live service plans** (`src/sim/plans.ts`): `Plan {stops[], headwayMin, window,
+     boatIds}`; 2 stops = out-and-back, 3+ = loop (wraps). stampPlan rotates departures
+     across boats, skips circuits that collide with other commitments, and reports
+     stamped/skipped + projected cost (dry-run mode powers the composer's live summary).
+     Edit → re-stamp; unpack → legs stay as plain trips; hand-editing a stamped leg detaches
+     it. `planMinHeadway` = slowest boat's circuit / boat count (the composer's physics floor).
+   - **Free connections**: routes between two already-docked ports cost nothing now (the
+     money gate is docks); the composer auto-connects missing legs as stops are picked, so
+     the map draws the loop live. `openRouteCost` removed.
+   - **UI**: Schedule tab gained a sheet bar (+ "alt schedule" mini-form: name + two
+     dropdowns) and the plan composer bottom card (ordered stop chips, window, headway
+     stepper with clamp warning, boat chips, coverage strip of departure ticks vs demand
+     curve, live cost/skip summary, Stamp / Unpack / Remove). Plan legs collapse into one
+     ⟳ band per lane; tap to edit. Port-sheet route cards gained "Plan service" (opens the
+     composer prefilled) and candidates became free "Connect".
+   - **Saves**: SAVE_VERSION 2 (sheets/plans/legs); v1 saves migrate (trips → leg pairs on
+     Base, mid-crossing boats reset idle once).
+   - **Bug-fix pass 2026-07-02** (reopened after playtest): (1) "Start a new company" (and the
+     game-over "New game") did nothing — `location.reload()` fires pagehide → autosave, which
+     re-persisted the just-cleared company. Fix: `clearSave()` sets a module `autosaveBlocked`
+     flag that `saveGame` honours, so no re-save happens during the reload. (2) The composer's
+     live summary diverged from what stamping produced: it previewed at the raw headway
+     (showing phantom "skipped") while commit silently raised headway to the physical floor —
+     so a plan could stamp a totally different count, or (boat already booked) stamp nothing
+     and close blank, reading as "my route didn't show up." Fix: the headway floor
+     (`planMinHeadway`) is now applied live in the composer (WYSIWYG), the − button clamps to
+     it, and a zero-fit stamp keeps the composer open with a clear "no departures fit" message
+     instead of closing and leaving a ghost plan.
 7. **Contracts + events.** Service-level contracts (mail run, school run: stipend +
    penalties) and announced-ahead demand events (festivals, closures) — direction and
    reactivity.

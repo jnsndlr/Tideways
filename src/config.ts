@@ -55,6 +55,30 @@ export const CONFIG = {
     ] as SeasonDef[],
   },
 
+  // Community growth — the weekly tick that makes pop/draw living state.
+  // Quality blends the share of demand actually carried with reputation; spare
+  // seat capacity (headroom) gates the upside, so a network sailing at 100%
+  // full stops attracting newcomers until the player adds capacity.
+  growth: {
+    maxWeeklyGrowth: 0.06, // best-case weekly pop/draw gain
+    maxWeeklyShrink: 0.03, // worst-case weekly decline when neglected
+    carriedTarget: 0.8, // carried share that separates growing from shrinking
+    repWeight: 0.4, // quality = (1-w)·carriedScore + w·repScore
+    minFactor: 0.5, // pop/draw floor, as a share of the seeded value
+    maxFactor: 3.0, // pop/draw ceiling, as a multiple of the seeded value
+  },
+
+  // Town tiers — total living pop (all segments) → a visible size class.
+  // Thresholds straddle the seeded ports: most islands start Hamlet–Town.
+  townTiers: [
+    { name: "Outpost", minPop: 0 },
+    { name: "Hamlet", minPop: 1_500 },
+    { name: "Village", minPop: 2_100 },
+    { name: "Town", minPop: 2_800 },
+    { name: "Harbor Town", minPop: 4_200 },
+    { name: "Port City", minPop: 6_500 },
+  ],
+
   // Balking
   balkRatePerMin: 0.004,
 
@@ -81,12 +105,30 @@ export const CONFIG = {
     hubStartSlips: [1, 1, 1], // home berths: count = fleet cap, tiers = ownable sizes
   },
 
-  // Direct route opening (Phase 2: player-created any-port↔any-port routes).
-  // crossingMin ≈ distanceNm × minPerNm, matching the seeded hub routes' ratio.
+  // Maintenance & wear — condition wears per nm sailed; low condition raises
+  // per-sailing breakdown risk on a cubic curve (a well-kept boat almost never
+  // breaks; a neglected one becomes a coin flip). A scheduled overhaul is a
+  // planning decision: the boat sits in the yard for a block of hours,
+  // colliding with its timetable. A breakdown is the expensive version at the
+  // worst possible time — half-speed limp, then a dead boat hogging a berth
+  // wherever it arrived, patched (not overhauled) when the yard is done.
+  maint: {
+    wearPerNm: 0.05, // condition points lost per nm sailed (~5/day in heavy service)
+    serviceCostFrac: 0.015, // scheduled overhaul cost, × hull price
+    serviceMin: 960, // 16h in the yard, restores condition to 100
+    repairCostFrac: 0.03, // emergency repair cost, × hull price
+    repairMin: 720, // 12h dead at the dock after a breakdown
+    repairRestoreTo: 70, // a patch job, not an overhaul
+    breakdownMaxPerSailing: 0.08, // per-sailing risk at condition 0
+    limpSpeedFactor: 0.5, // crossing speed while broken down
+    resaleConditionFloor: 0.4, // share of resale value a worn-out hull still fetches
+  },
+
+  // Direct routes (player-created any-port↔any-port). Connecting two docked
+  // ports is FREE — the money gate is the docks. crossingMin ≈ distanceNm ×
+  // minPerNm, matching the seeded hub routes' ratio.
   routeCfg: {
     minPerNm: 3.0,
-    openBaseCost: 60_000,
-    openCostPerNm: 6_000,
   },
 
   // Origin/destination demand — a gravity model over ports.

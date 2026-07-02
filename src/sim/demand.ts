@@ -45,7 +45,7 @@ export function segDailyVolume(state: GameState, segId: string): number {
   for (const id in state.ports) {
     const P = state.ports[id];
     if (P.def.isHub || !P.slips.length) continue;
-    islandPop += P.def.pop[segId] ?? 0;
+    islandPop += P.pop[segId] ?? 0;
   }
   return (CONFIG.od.tripsPerResident[segId] ?? 0) * islandPop;
 }
@@ -57,11 +57,11 @@ function pairWeights(state: GameState, seg: SegmentDef): { pairs: PairWeight[]; 
   const pairs: PairWeight[] = [];
   let sum = 0;
   for (const a of docked) {
-    const popA = state.ports[a].def.pop[seg.id] ?? 0;
+    const popA = state.ports[a].pop[seg.id] ?? 0;
     if (popA <= 0) continue;
     for (const b of docked) {
       if (a === b) continue;
-      const drawB = state.ports[b].def.draw[seg.id] ?? 0;
+      const drawB = state.ports[b].draw[seg.id] ?? 0;
       if (drawB <= 0) continue;
       if (!routing.reachable(a, b)) continue; // no path -> no latent demand surfaced in v1
       const nm = nmBetween(state.ports[a].def.pos, state.ports[b].def.pos);

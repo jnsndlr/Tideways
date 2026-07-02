@@ -9,6 +9,7 @@ import {
   createState,
   loadGame,
   openRoute,
+  requestService,
   saveGame,
   sellBoat,
   upgradeSlip,
@@ -38,6 +39,10 @@ const panel = new Panel(state, {
       timeline.rebuild(); // lane removed
       panel.buildFleet(); // row removed, berth freed
     }
+  },
+  onService: (boatId) => {
+    const boat = state.boats.find((b) => b.id === boatId);
+    if (boat) requestService(boat); // queue/cancel; the row's live refresh shows it
   },
   onSpeed: (speed) => {
     state.speed = speed;
@@ -71,6 +76,12 @@ const panel = new Panel(state, {
     renderer.previewFrom = fromId;
     renderer.previewTo = toId;
   },
+  onPlanService: (fromId, toId) => {
+    panel.selectDock(null);
+    renderer.selected = null;
+    showTab("schedule");
+    timeline.openComposer({ stops: [fromId, toId] });
+  },
 });
 
 timeline = new Timeline(state, () => panel.buildFleet());
@@ -81,14 +92,14 @@ const tabViews: Record<string, HTMLElement | null> = {
   schedule: document.getElementById("view-schedule"),
   company: document.getElementById("view-company"),
 };
+function showTab(tab: string): void {
+  for (const name in tabViews) tabViews[name]!.hidden = name !== tab;
+  document
+    .querySelectorAll<HTMLButtonElement>("#tabbar button")
+    .forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
+}
 document.querySelectorAll<HTMLButtonElement>("#tabbar button").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    const tab = btn.dataset.tab!;
-    for (const name in tabViews) tabViews[name]!.hidden = name !== tab;
-    document
-      .querySelectorAll("#tabbar button")
-      .forEach((b) => b.classList.toggle("active", b === btn));
-  });
+  btn.addEventListener("click", () => showTab(btn.dataset.tab!));
 });
 
 // ---- Map camera: tap to select, drag/swipe to pan, wheel/pinch to zoom ----
@@ -202,6 +213,15 @@ document.getElementById("new-game")!.addEventListener("click", () => {
 if (import.meta.env.PROD && "serviceWorker" in navigator) {
   navigator.serviceWorker.register("/sw.js").catch(() => {});
 }
+
+// Debug handle: lets devtools (and automated verification) drive the sim —
+// fast-forward days, select docks — without faking pointer events.
+declare global {
+  interface Window {
+    __tideways?: { state: typeof state; panel: Panel; advance: typeof advance };
+  }
+}
+window.__tideways = { state, panel, advance };
 
 // Main loop.
 let last = performance.now();
