@@ -2,6 +2,7 @@ import { CONFIG, vesselById, vesselRank } from "../config";
 import {
   addTrip,
   hasOverlap,
+  projectedDailyCost,
   removeTrip,
   tripDuration,
 } from "../sim";
@@ -15,6 +16,7 @@ const SNAP = CONFIG.scheduleSnapMin;
 const snap = (m: number) => Math.round(m / SNAP) * SNAP;
 const hhmm = (m: number) =>
   `${Math.floor(m / 60)}:${String(Math.round(m % 60)).padStart(2, "0")}`;
+const money = (n: number) => "$" + Math.round(n).toLocaleString();
 
 interface Drag {
   kind: "new" | "move";
@@ -122,7 +124,23 @@ export class Timeline {
         lane.appendChild(block);
       }
       row.appendChild(lane);
-      this.root.appendChild(row);
+
+      // live projected cost of this boat's itinerary AS SCHEDULED — updates
+      // instantly on every add/move/remove since rebuild() re-derives it.
+      const { fuel, crew } = projectedDailyCost(boat, this.state.routes);
+      const n = boat.itinerary.length;
+      const cost = document.createElement("div");
+      cost.className = "tl-cost";
+      cost.innerHTML =
+        `<span>${n} trip${n === 1 ? "" : "s"} today</span>` +
+        `<b>${money(fuel)} fuel</b>` +
+        `<b>${money(crew)} crew</b>` +
+        `<b class="tl-cost-total">${money(fuel + crew)} today</b>`;
+
+      const wrap = document.createElement("div");
+      wrap.className = "tl-boat";
+      wrap.append(row, cost);
+      this.root.appendChild(wrap);
     }
   }
 

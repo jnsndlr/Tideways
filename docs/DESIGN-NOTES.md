@@ -112,6 +112,19 @@ staffing tier comes first, likely alongside #5 or after #7); full 3D.
 `document.querySelector` calls per frame (`src/ui/panel.ts`) — cache element references once
 at build time. Free battery on mobile.
 
+## Live scheduler cost projection (built 2026-07-01, ahead of milestone #4)
+
+User: "I need to be able to realtime see the cost of my routing, not the previous day's
+ledger." `projectedDailyCost(boat, routes)` in `src/sim/schedule.ts` walks a boat's
+itinerary and sums fuel (`distanceNm × fuelPerNm`) + crew (`crewPerSailing`) × 2 per trip
+(out + back), mirroring exactly what `chargeSailing` (`src/sim/ferry.ts`) charges when those
+sailings actually run — smoke-tested 1:1 against a live day's `fuelYesterday`/`crewYesterday`.
+Rendered as a line under each boat's lane in the Schedule tab (`src/ui/timeline.ts`):
+"N trips today · $X fuel · $Y crew · $Z today", recomputed on every `rebuild()` so it updates
+instantly as trips are dragged, moved, or deleted. Pure projection — independent of the
+clock/demand, doesn't model delays or breakdowns. Confirmed fuel is already leg-distance-based
+(not flat) while answering this.
+
 ## Activity-based vessel costs (decided 2026-07-01, built with milestone #2)
 
 The flat `dailyCost` per hull made selling the only sane off-season move. Replaced with:

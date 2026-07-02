@@ -20,6 +20,7 @@ import {
   sellBoat,
   sellPrice,
   buyBlocker,
+  projectedDailyCost,
 } from "../src/sim";
 
 let failures = 0;
@@ -189,6 +190,47 @@ function check(name: string, cond: boolean, detail?: unknown) {
     s2.crewYesterday,
   );
   check("sailing burned fuel", s2.fuelYesterday > 0, Math.round(s2.fuelYesterday));
+}
+
+// ---- 8. scheduler's live cost projection matches what actually gets charged --
+{
+  const s = createState();
+  const boat = s.boats[0];
+  const vc = vesselById(boat.classId);
+
+  check("empty itinerary projects zero", (() => {
+    const p = projectedDailyCost(boat, s.routes);
+    return p.fuel === 0 && p.crew === 0;
+  })());
+
+  addTrip(s, boat, "r-lopez", 7 * 60);
+  addTrip(s, boat, "r-friday", 13 * 60);
+  const proj = projectedDailyCost(boat, s.routes);
+  const expectFuel = 2 * (CONFIG.routes.find((r) => r.id === "r-lopez")!.distanceNm + CONFIG.routes.find((r) => r.id === "r-friday")!.distanceNm) * vc.fuelPerNm;
+  const expectCrew = 4 * vc.crewPerSailing; // 2 trips x 2 sailings each
+  check("projected fuel matches route distances", proj.fuel === expectFuel, [proj.fuel, expectFuel]);
+  check("projected crew matches sailing count", proj.crew === expectCrew, [proj.crew, expectCrew]);
+
+  // run the day and confirm the projection matches what the sim actually charged
+  while (s.day === 1) advance(s, 5);
+  check(
+    "projection matches actual fuel spend",
+    Math.abs(proj.fuel - s.fuelYesterday) < 0.01,
+    [proj.fuel, s.fuelYesterday],
+  );
+  check(
+    "projection matches actual crew spend",
+    Math.abs(proj.crew - s.crewYesterday) < 0.01,
+    [proj.crew, s.crewYesterday],
+  );
+
+  // a trip on a since-removed route doesn't blow up the projection
+  const s2 = createState();
+  const boat2 = s2.boats[0];
+  addTrip(s2, boat2, "r-lopez", 7 * 60);
+  delete s2.routes["r-lopez"];
+  const proj2 = projectedDailyCost(boat2, s2.routes);
+  check("projection tolerates a removed route", proj2.fuel === 0 && proj2.crew === 0);
 }
 
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURE(S)`);

@@ -676,6 +676,8 @@ Hand-placing every sailing does not scale past a few boats, and precision drag-a
 
 A schedule generator is planned — some form of "route + service window + frequency → generated timetable" that can be saved, edited, and re-generated. The exact interaction design is still being explored and is deliberately not locked yet; the manual timetable remains the foundation it builds on.
 
+Live cost projection. The scheduler shows each vessel's projected fuel and crew cost for the day it's currently drawn, computed directly from its timetable — not yesterday's settled ledger. This turns the timetable itself into the primary financial instrument: the player sees the cost of a routing decision the moment they make it, before a single sailing runs. Fuel scales with each route's distance; crew scales with the vessel class's per-sailing wage; both are doubled per scheduled round trip (a leg out, a leg back). This is a projection of what today will cost if the drawn timetable runs as-is — it does not model demand, delays, or breakdowns, and it does not replace the Company tab's ledger, which reports what was actually earned and spent.
+
 ⸻
 
 Platform & Session Design

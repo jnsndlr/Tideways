@@ -51,3 +51,25 @@ export function earliestFreeSlot(
   }
   return null;
 }
+
+/** Projected fuel + crew cost of a boat's itinerary AS SCHEDULED (not yet run) —
+ *  the live readout on the Schedule tab. Each itinerary entry is a round trip,
+ *  i.e. two sailings on the route (out + back), matching chargeSailing in
+ *  ferry.ts. Pure projection: independent of the clock, demand, or whether the
+ *  boat actually departs on time — it answers "what will today cost if this
+ *  timetable runs as drawn." */
+export function projectedDailyCost(
+  boat: Boat,
+  routes: Record<string, RouteState>,
+): { fuel: number; crew: number } {
+  const vc = vesselById(boat.classId);
+  let fuel = 0;
+  let crew = 0;
+  for (const trip of boat.itinerary) {
+    const R = routes[trip.routeId];
+    if (!R) continue; // route removed since the trip was scheduled
+    fuel += 2 * R.def.distanceNm * vc.fuelPerNm;
+    crew += 2 * vc.crewPerSailing;
+  }
+  return { fuel, crew };
+}

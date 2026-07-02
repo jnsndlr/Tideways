@@ -756,11 +756,31 @@ canvas {
   font-size: 9px;
   color: var(--txt-dim);
 }
+.tl-boat {
+  margin-bottom: 10px;
+}
 .tl-row {
   display: flex;
   align-items: stretch;
   gap: 6px;
-  margin-bottom: 6px;
+  margin-bottom: 3px;
+}
+.tl-cost {
+  display: flex;
+  gap: 10px;
+  margin-left: 64px; /* aligns under the lane, past the 58px label + 6px gap */
+  font-size: 10px;
+  color: var(--txt-dim);
+}
+.tl-cost b {
+  color: var(--txt-dim);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.tl-cost .tl-cost-total {
+  margin-left: auto;
+  color: var(--gold);
+  font-weight: 700;
 }
 .tl-label {
   width: 58px;
