@@ -3,7 +3,6 @@ import {
   addSlipCost,
   buyBlocker,
   clearSave,
-  isWeekend,
   openRouteCost,
   repFactor,
   routeCandidates,
@@ -11,7 +10,6 @@ import {
   segWaiting,
   sellPrice,
   slipUpgradeCost,
-  waitingPeople,
   weekdayName,
 } from "../sim";
 import { repColor } from "../render/canvas";
@@ -40,20 +38,42 @@ export interface PanelCallbacks {
   onPreviewRoute: (fromId: string | null, toId: string | null) => void;
 }
 
+/**
+ * All DOM the panel touches per frame is cached: HUD elements once at startup,
+ * company-tab elements once at build, and the dock sheet's live values are
+ * collected into a map each time the sheet's structure re-renders. updateHud
+ * never does a document-wide querySelector.
+ */
 export class Panel {
-  private routesEl = document.getElementById("routes")!;
   private fleetEl = document.getElementById("fleet")!;
   private buyWrap = document.getElementById("buy-wrap")!;
+  private companyEl = document.getElementById("company")!;
+  private companyView = document.getElementById("view-company")!;
   private detailEl: HTMLElement;
   private detailKey: string | null = null; // structural signature of what's rendered
   selectedDock: string | null = null;
+
+  // cached HUD refs (static DOM)
+  private cashEl = document.querySelector<HTMLElement>("[data-cash]")!;
+  private dayLabEl = document.querySelector<HTMLElement>("[data-daylab]")!;
+  private clockEl = document.querySelector<HTMLElement>("[data-clock]")!;
+  private netEl = document.querySelector<HTMLElement>("[data-net]")!;
+
+  // cached company-tab refs (rebuilt with buildCompany / buildFleet)
+  private co: Record<string, HTMLElement> = {};
+  private buyBtns: { btn: HTMLButtonElement; classId: string }[] = [];
+  private sellBtns: { btn: HTMLButtonElement; boatId: number }[] = [];
+
+  // dock-sheet live elements, collected after each structural render
+  private live = new Map<string, HTMLElement>();
+  private costBtns: HTMLButtonElement[] = [];
 
   constructor(private state: GameState, private cb: PanelCallbacks) {
     this.detailEl = document.createElement("div");
     this.detailEl.id = "dock-detail";
     this.detailEl.hidden = true;
     document.getElementById("map-wrap")!.appendChild(this.detailEl);
-    this.buildRoutes();
+    this.buildCompany();
     this.buildFleet();
     this.wireSpeed();
   }
@@ -62,105 +82,83 @@ export class Panel {
     return this.state.ports[this.state.hubId].slips;
   }
 
-  /** The non-hub end of a route — the island whose rep/queues the card shows. */
-  private islandEnd(R: RouteState): PortState {
-    const def = R.def;
-    return this.state.ports[def.from === this.state.hubId ? def.to : def.from];
-  }
-
-  /** The (hub) route serving a given island port, if any. */
-  private routeForPort(portId: string): RouteState | null {
-    for (const id in this.state.routes) {
-      const def = this.state.routes[id].def;
-      if (def.to === portId || def.from === portId) return this.state.routes[id];
-    }
-    return null;
-  }
-
+  /** Two-button speed control: pause toggle + a 1×/2×/4× cycle. */
   private wireSpeed(): void {
-    document.querySelectorAll<HTMLButtonElement>("#speed button").forEach((b) => {
-      b.onclick = () => {
-        this.cb.onSpeed(parseInt(b.dataset.speed ?? "1", 10));
-        document.querySelectorAll("#speed button").forEach((x) => x.classList.remove("active"));
-        b.classList.add("active");
-      };
+    const pause = document.getElementById("speed-pause") as HTMLButtonElement;
+    const cycle = document.getElementById("speed-cycle") as HTMLButtonElement;
+    const speeds = [1, 2, 4];
+    let current = 1; // last running speed (restored on unpause)
+    const apply = (): void => {
+      const paused = this.state.speed === 0;
+      pause.classList.toggle("paused", paused);
+      pause.textContent = paused ? "▶" : "⏸";
+      cycle.textContent = current + "×";
+      cycle.classList.toggle("active", !paused);
+    };
+    pause.onclick = () => {
+      this.cb.onSpeed(this.state.speed === 0 ? current : 0);
+      apply();
+    };
+    cycle.onclick = () => {
+      current = speeds[(speeds.indexOf(current) + 1) % speeds.length];
+      this.cb.onSpeed(current); // choosing a speed also unpauses
+      apply();
+    };
+    apply();
+  }
+
+  // ---- company tab -----------------------------------------------------------
+
+  private buildCompany(): void {
+    this.companyEl.innerHTML = `
+      <div class="panel-title">Company</div>
+      <div class="co-stats">
+        <div class="co-stat"><span>Value</span><b data-co="value">—</b></div>
+        <div class="co-stat"><span>Reputation</span><b data-co="rep">—</b></div>
+        <div class="co-stat"><span>Season</span><b data-co="season">—</b></div>
+      </div>
+      <div class="panel-title">Daily ledger · yesterday</div>
+      <div class="co-ledger">
+        <div><span>Fare revenue</span><b data-co="rev">—</b></div>
+        <div><span>Fuel</span><b data-co="fuel">—</b></div>
+        <div><span>Crew sailings</span><b data-co="crew">—</b></div>
+        <div><span>Moorage</span><b data-co="moorage">—</b></div>
+        <div class="co-net"><span>Net / day</span><b data-co="net">—</b></div>
+      </div>`;
+    this.co = {};
+    this.companyEl.querySelectorAll<HTMLElement>("[data-co]").forEach((el) => {
+      this.co[el.dataset.co!] = el;
     });
   }
 
-  // ---- routes (one card per usable leg) ------------------------------------
-
-  buildRoutes(): void {
-    this.routesEl.innerHTML = "";
-    for (const id in this.state.routes) {
-      const R = this.state.routes[id];
-      const a = this.state.ports[R.def.from];
-      const b = this.state.ports[R.def.to];
-      if (!a.slips.length || !b.slips.length) continue; // leg not yet usable
-      const P = this.islandEnd(R);
-      const card = document.createElement("div");
-      card.className = "route-card";
-      card.innerHTML = `
-        <div class="route-head">
-          <div class="dot" style="background:${R.def.color}"></div>
-          <div class="route-name">${R.def.name}</div>
-          <div class="route-sub">${R.def.distanceNm} nm · ${R.def.crossingMin} min</div>
-        </div>
-        <div class="route-stats">
-          <div><span>Population</span> <b>${Math.round(portPopulation(P)).toLocaleString()}</b></div>
-          <div><span>Waiting</span> <b data-wait="${id}">0</b></div>
-          <div class="rep-cell"><span>Rep</span>
-            <span class="mini-meter"><i data-routerepbar="${id}"></i></span>
-            <b data-routerep="${id}">—</b></div>
-        </div>
-        <div class="seg-row">${CONFIG.segments
-          .map(
-            (g) =>
-              `<span class="seg-pill" style="border-color:${g.color}">
-                 <i style="background:${g.color}"></i>${g.icon}
-                 <b data-segwait="${id}:${g.id}">0</b></span>`,
-          )
-          .join("")}</div>`;
-
-      const priceRow = document.createElement("div");
-      priceRow.className = "price-row";
-      priceRow.appendChild(this.makeStepper(id, "foot", R));
-      priceRow.appendChild(this.makeStepper(id, "car", R));
-      card.appendChild(priceRow);
-
-      this.routesEl.appendChild(card);
+  private refreshCompany(): void {
+    const s = this.state;
+    const has = s.day > 1;
+    const season = seasonOf(s.day);
+    this.co.value.textContent = money(s.companyValue);
+    this.co.rep.textContent = `${Math.round(s.rep)} · ${repLabel(s.rep)}`;
+    this.co.rep.style.color = repColor(s.rep);
+    this.co.season.textContent = `${season.icon} ${season.name}`;
+    this.co.rev.textContent = has ? signed(s.revenueYesterday) : "—";
+    this.co.fuel.textContent = has ? signed(-s.fuelYesterday) : "—";
+    this.co.crew.textContent = has ? signed(-s.crewYesterday) : "—";
+    this.co.moorage.textContent = signed(-this.fleetMoorage());
+    const net = this.dailyNet();
+    this.co.net.textContent = net === null ? "—" : signed(net);
+    this.co.net.style.color = net === null ? "" : net >= 0 ? "var(--good)" : "var(--bad)";
+    for (const { btn, classId } of this.buyBtns)
+      btn.disabled = buyBlocker(s, classId) !== null;
+    for (const { btn, boatId } of this.sellBtns) {
+      const b = s.boats.find((x) => x.id === boatId);
+      btn.disabled = !b || b.phase !== "idle";
     }
-  }
-
-  private makeStepper(routeId: string, kind: "foot" | "car", R: RouteState): HTMLElement {
-    const b = CONFIG.priceBounds;
-    const min = kind === "foot" ? b.footMin : b.carMin;
-    const max = kind === "foot" ? b.footMax : b.carMax;
-    const wrap = document.createElement("div");
-    wrap.className = "price";
-    const cur = () => (kind === "foot" ? R.footPrice : R.carPrice);
-    const val = document.createElement("b");
-    val.textContent = "$" + cur();
-    const set = (v: number) => {
-      const c = Math.max(min, Math.min(max, v));
-      this.cb.onSetPrice(routeId, kind, c);
-      val.textContent = "$" + c;
-    };
-    const label = document.createElement("span");
-    label.textContent = kind === "foot" ? "Foot" : "Car";
-    const dn = document.createElement("button");
-    dn.textContent = "−";
-    dn.onclick = () => set(cur() - b.step);
-    const up = document.createElement("button");
-    up.textContent = "+";
-    up.onclick = () => set(cur() + b.step);
-    wrap.append(label, dn, val, up);
-    return wrap;
   }
 
   // ---- fleet + buy menu ----------------------------------------------------
 
   buildFleet(): void {
     this.fleetEl.innerHTML = "";
+    this.sellBtns = [];
     for (const boat of this.state.boats) {
       const vc = vesselById(boat.classId);
       const row = document.createElement("div");
@@ -168,13 +166,15 @@ export class Panel {
       row.innerHTML = `
         <span class="fleet-name">⛴ ${boat.name}</span>
         <span class="fleet-class">${vc.short}</span>
-        <span class="fleet-cap">${vc.peopleCap}p${vc.carCap ? " · " + vc.carCap + "🚗" : " · no cars"}</span>
-        <span class="fleet-trips">${boat.itinerary.length} sailings</span>
-        <button class="fleet-sell" data-boat="${boat.id}">Sell ${money(sellPrice(boat.classId))}</button>`;
-      row.querySelector(".fleet-sell")!.addEventListener("click", () => {
+        <span class="fleet-cap">${vc.peopleCap}p${vc.carCap ? " · " + vc.carCap + "🚗" : ""}</span>
+        <span class="fleet-trips">${boat.itinerary.length} trips</span>
+        <button class="fleet-sell">Sell ${money(sellPrice(boat.classId))}</button>`;
+      const btn = row.querySelector<HTMLButtonElement>(".fleet-sell")!;
+      btn.addEventListener("click", () => {
         if (confirm(`Sell ${boat.name} for ${money(sellPrice(boat.classId))}? Its timetable is discarded.`))
           this.cb.onSell(boat.id);
       });
+      this.sellBtns.push({ btn, boatId: boat.id });
       this.fleetEl.appendChild(row);
     }
     this.buildBuyMenu();
@@ -182,6 +182,7 @@ export class Panel {
 
   private buildBuyMenu(): void {
     this.buyWrap.innerHTML = "";
+    this.buyBtns = [];
     const used = this.state.boats.length;
     const cap = this.hubSlips.length;
     const full = used >= cap;
@@ -211,33 +212,36 @@ export class Panel {
         this.cb.onBuy(vc.id);
         this.buildFleet();
       };
+      this.buyBtns.push({ btn, classId: vc.id });
       grid.appendChild(btn);
     }
     this.buyWrap.appendChild(grid);
   }
 
-  // ---- dock detail ---------------------------------------------------------
+  // ---- dock sheet ------------------------------------------------------------
 
   selectDock(id: string | null): void {
-    this.selectedDock = id ?? null; // a port id; the hub opens the home-port panel
+    this.selectedDock = id ?? null;
     this.cb.onPreviewRoute(null, null);
     this.renderDockDetail();
   }
 
   private routesForPort(portId: string): RouteState[] {
     return Object.values(this.state.routes).filter(
-      (R) => R.def.from === portId || R.def.to === portId,
+      (R) =>
+        (R.def.from === portId || R.def.to === portId) &&
+        this.state.ports[R.def.from].slips.length > 0 &&
+        this.state.ports[R.def.to].slips.length > 0,
     );
   }
 
   private dockKey(id: string): string {
-    if (id === this.state.hubId) return `hub|${this.hubSlips.join(",")}|${this.state.boats.length}`;
-    return `${id}|${this.state.ports[id].slips.join(",")}|${this.routesForPort(id).length}`;
+    const P = this.state.ports[id];
+    return `${id}|${P.slips.join(",")}|${this.routesForPort(id).length}|${this.state.boats.length}`;
   }
 
-  /** Rebuild the detail structure. Called only when the panel changes shape
-   *  (selection / build / slip change) — NOT every frame, so the buttons survive
-   *  long enough to be clicked. Live numbers are patched by refreshDockDetail. */
+  /** Rebuild the sheet structure. Called only when its shape changes (selection /
+   *  build / slip / route change) — live numbers are patched by refreshDockDetail. */
   private renderDockDetail(): void {
     const id = this.selectedDock;
     if (!id) {
@@ -246,14 +250,24 @@ export class Panel {
       return;
     }
     this.detailEl.hidden = false;
+    const P = this.state.ports[id];
     if (id === this.state.hubId) {
       this.detailEl.innerHTML = this.homePortHtml();
     } else {
-      const P = this.state.ports[id];
-      const route = this.routeForPort(id);
-      this.detailEl.innerHTML = P.slips.length ? this.openDockHtml(P, route) : this.lockedDockHtml(P, route);
+      this.detailEl.innerHTML = P.slips.length ? this.openDockHtml(P) : this.lockedDockHtml(P);
     }
-    this.detailEl.querySelector(".dd-close")!.addEventListener("click", () => this.selectDock(null));
+
+    // collect live elements + cost buttons once per structural render
+    this.live.clear();
+    this.detailEl.querySelectorAll<HTMLElement>("[data-live]").forEach((el) => {
+      this.live.set(el.dataset.live!, el);
+    });
+    this.costBtns = [...this.detailEl.querySelectorAll<HTMLButtonElement>("[data-cost]")];
+
+    // wire interactions
+    this.detailEl.querySelector(".dd-close")!.addEventListener("click", () => {
+      this.selectDock(null);
+    });
     this.detailEl
       .querySelector(".dd-build")
       ?.addEventListener("click", () => this.cb.onBuildDock(id));
@@ -272,63 +286,60 @@ export class Panel {
         .querySelector(".rc-open")
         ?.addEventListener("click", () => this.cb.onOpenRoute(id, to));
     });
+    this.detailEl.querySelectorAll<HTMLButtonElement>("[data-pr]").forEach((b) => {
+      const [routeId, kind, dir] = b.dataset.pr!.split(":") as [string, "foot" | "car", string];
+      b.addEventListener("click", () => {
+        const R = this.state.routes[routeId];
+        const bounds = CONFIG.priceBounds;
+        const min = kind === "foot" ? bounds.footMin : bounds.carMin;
+        const max = kind === "foot" ? bounds.footMax : bounds.carMax;
+        const cur = kind === "foot" ? R.footPrice : R.carPrice;
+        const next = Math.max(min, Math.min(max, cur + (dir === "up" ? bounds.step : -bounds.step)));
+        this.cb.onSetPrice(routeId, kind, next);
+        const el = this.live.get(`price:${routeId}:${kind}`);
+        if (el) el.textContent = "$" + next;
+      });
+    });
+
     this.detailKey = this.dockKey(id);
   }
 
-  /** Per-frame: patch live values + button affordability without rebuilding DOM. */
+  /** Per-frame: patch live values + button affordability without touching structure. */
   private refreshDockDetail(): void {
     const id = this.selectedDock;
     if (!id) return;
+    for (const el of this.costBtns) el.disabled = this.state.cash < Number(el.dataset.cost);
 
-    // every cost button carries data-cost; grey it out when unaffordable
-    this.detailEl.querySelectorAll<HTMLButtonElement>("[data-cost]").forEach((el) => {
-      el.disabled = this.state.cash < Number(el.dataset.cost);
-    });
-
+    const P = this.state.ports[id];
     if (id === this.state.hubId) {
-      this.setIn("[data-hub-fleet]", `${this.state.boats.length} / ${this.hubSlips.length}`);
-      const has = this.state.day > 1;
-      const rev = this.state.revenueYesterday;
-      const fuel = this.state.fuelYesterday;
-      const net = this.dailyNet();
-      const fpct = has && rev > 0 ? Math.round((fuel / rev) * 100) + "%" : "—";
-      this.setIn("[data-hub-rev]", has ? signed(rev) : "—");
-      this.setIn("[data-hub-fuel]", has ? signed(-fuel) + " · " + fpct : "—");
-      this.setIn("[data-hub-crew]", has ? signed(-this.state.crewYesterday) : "—");
-      this.setIn("[data-hub-upkeep]", signed(-this.fleetMoorage()));
-      const netEl = this.detailEl.querySelector<HTMLElement>("[data-hub-net]");
-      if (netEl) {
-        netEl.textContent = net === null ? "—" : signed(net);
-        netEl.style.color = net === null ? "" : net >= 0 ? "var(--good)" : "var(--bad)";
-      }
+      const fleet = this.live.get("hubfleet");
+      if (fleet) fleet.textContent = `${this.state.boats.length} / ${this.hubSlips.length}`;
       return;
     }
-    const P = this.state.ports[id];
     if (!P.slips.length) return; // locked: only the build button needed refreshing
 
     const sw = segWaiting(P);
     for (const g of CONFIG.segments) {
       const sr = P.segRep[g.id];
-      const bar = this.detailEl.querySelector<HTMLElement>(`[data-segrepbar="${g.id}"]`);
+      const bar = this.live.get(`bar:${g.id}`);
       if (bar) {
         bar.style.width = sr + "%";
         bar.style.background = repColor(sr);
       }
-      this.setIn(`[data-segrep="${g.id}"]`, String(Math.round(sr)));
-      this.setIn(`[data-segwait="${g.id}"]`, Math.round(sw[g.id]) + " waiting");
+      const rep = this.live.get(`segrep:${g.id}`);
+      if (rep) rep.textContent = String(Math.round(sr));
+      const wait = this.live.get(`segwait:${g.id}`);
+      if (wait) wait.textContent = Math.round(sw[g.id]) + " waiting";
     }
-    const head = this.detailEl.querySelector<HTMLElement>("[data-dd-rep]");
+    const head = this.live.get("rep");
     if (head) {
       head.textContent = `${Math.round(P.rep)} · ${repLabel(P.rep)}`;
       head.style.color = repColor(P.rep);
     }
-    this.setIn("[data-dd-turnout]", Math.round(repFactor(P.demandRep) * 100) + "% of base");
-    this.setIn("[data-dd-balked]", Math.round(P.balkedYesterday).toLocaleString());
-  }
-
-  private setIn(sel: string, text: string): void {
-    const el = this.detailEl.querySelector(sel);
-    if (el) el.textContent = text;
+    const turnout = this.live.get("turnout");
+    if (turnout) turnout.textContent = Math.round(repFactor(P.demandRep) * 100) + "% of base";
+    const balked = this.live.get("balked");
+    if (balked) balked.textContent = Math.round(P.balkedYesterday).toLocaleString();
   }
 
   private fleetMoorage(): number {
@@ -349,6 +360,7 @@ export class Panel {
 
   private dockHead(name: string, color: string): string {
     return `
+      <div class="dd-grab"></div>
       <div class="dd-head">
         <div class="dot" style="background:${color}"></div>
         <div class="dd-name">${name}</div>
@@ -376,37 +388,25 @@ export class Panel {
 
   private homePortHtml(): string {
     const hub = this.state.ports[this.state.hubId];
-    const has = this.state.day > 1;
-    const rev = this.state.revenueYesterday;
-    const fuel = this.state.fuelYesterday;
-    const net = this.dailyNet();
-    const fpct = has && rev > 0 ? Math.round((fuel / rev) * 100) + "%" : "—";
-    const netColor = net === null ? "" : net >= 0 ? "var(--good)" : "var(--bad)";
     return `${this.dockHead(hub.def.name + " · Home Port", "#57b6e0")}
       <div class="dd-rows">
-        <div><span>Fleet berths</span><b data-hub-fleet>${this.state.boats.length} / ${this.hubSlips.length}</b></div>
+        <div><span>Fleet berths</span><b data-live="hubfleet">${this.state.boats.length} / ${this.hubSlips.length}</b></div>
       </div>
-      <div class="dd-slips-title">Daily ledger · yesterday</div>
-      <div class="dd-rows">
-        <div><span>Fare revenue</span><b data-hub-rev>${has ? signed(rev) : "—"}</b></div>
-        <div><span>Fuel</span><b data-hub-fuel>${has ? signed(-fuel) + " · " + fpct : "—"}</b></div>
-        <div><span>Crew sailings</span><b data-hub-crew>${has ? signed(-this.state.crewYesterday) : "—"}</b></div>
-        <div><span>Moorage</span><b data-hub-upkeep>${signed(-this.fleetMoorage())}</b></div>
-        <div style="border-top:1px solid rgba(255,255,255,.12);margin-top:2px;padding-top:4px">
-          <span>Net / day</span><b data-hub-net style="color:${netColor}">${net === null ? "—" : signed(net)}</b></div>
-      </div>
+      <div class="dd-slips-title">Berths</div>
       ${this.slipsHtml(this.hubSlips)}
-      <div class="dd-hint">Berths cap your fleet size; a slip's size sets the largest vessel you can base. Costs follow activity — every departure pays crew + fuel, so near-empty sailings quietly eat the ledger, while an idle hull only pays moorage.</div>`;
+      ${this.routesHtml(hub)}
+      <div class="dd-hint">Berths cap your fleet size; a slip's size sets the largest vessel you can base. The daily ledger lives in the Company tab.</div>`;
   }
 
-  private lockedDockHtml(P: PortState, route: RouteState | null): string {
+  private lockedDockHtml(P: PortState): string {
     const cost = CONFIG.slipCfg.buildSlipCost;
     const est = Math.round(portPopulation(P)).toLocaleString();
-    const crossing = route ? `${route.def.distanceNm} nm · ${route.def.crossingMin} min` : "—";
+    const hub = this.state.ports[this.state.hubId];
+    const dist = Math.round(nmBetween(P.def.pos, hub.def.pos) * 10) / 10;
     return `${this.dockHead(P.def.name, P.def.color)}
       <div class="dd-locked">🔒 No dock here yet</div>
       <div class="dd-rows">
-        <div><span>Crossing</span><b>${crossing}</b></div>
+        <div><span>To hub</span><b>${dist} nm</b></div>
         <div><span>Population</span><b>${est}</b></div>
       </div>
       <button class="dd-build" data-cost="${cost}">
@@ -415,7 +415,7 @@ export class Panel {
       <div class="dd-hint">A new dock opens with one ${CONFIG.vesselClasses[0].short} slip and connects to the hub. Upgrade it or add berths later.</div>`;
   }
 
-  private openDockHtml(P: PortState, _route: RouteState | null): string {
+  private openDockHtml(P: PortState): string {
     const sw = segWaiting(P);
     const turnout = Math.round(repFactor(P.demandRep) * 100);
 
@@ -424,37 +424,51 @@ export class Panel {
         const sr = P.segRep[g.id];
         return `<div class="dd-seg" style="border-color:${g.color}">
           <span>${g.icon} ${g.name}</span>
-          <span class="dd-seg-meter"><i data-segrepbar="${g.id}" style="width:${sr}%;background:${repColor(sr)}"></i></span>
-          <b data-segrep="${g.id}">${Math.round(sr)}</b>
-          <em data-segwait="${g.id}">${Math.round(sw[g.id])} waiting</em></div>`;
+          <span class="dd-seg-meter"><i data-live="bar:${g.id}" style="width:${sr}%;background:${repColor(sr)}"></i></span>
+          <b data-live="segrep:${g.id}">${Math.round(sr)}</b>
+          <em data-live="segwait:${g.id}">${Math.round(sw[g.id])} waiting</em></div>`;
       })
       .join("");
 
     return `${this.dockHead(P.def.name, P.def.color)}
       <div class="dd-rep">
         <div class="dd-rep-top"><span>Reputation by segment</span>
-          <b data-dd-rep style="color:${repColor(P.rep)}">${Math.round(P.rep)} · ${repLabel(P.rep)}</b></div>
+          <b data-live="rep" style="color:${repColor(P.rep)}">${Math.round(P.rep)} · ${repLabel(P.rep)}</b></div>
       </div>
       <div class="dd-segs">${segs}</div>
       <div class="dd-rows">
-        <div><span>Turnout today</span><b data-dd-turnout>${turnout}% of base</b></div>
-        <div><span>Gave up yesterday</span><b data-dd-balked>${Math.round(P.balkedYesterday).toLocaleString()}</b></div>
+        <div><span>Turnout today</span><b data-live="turnout">${turnout}% of base</b></div>
+        <div><span>Gave up yesterday</span><b data-live="balked">${Math.round(P.balkedYesterday).toLocaleString()}</b></div>
       </div>
+      ${this.routesHtml(P)}
       <div class="dd-slips-title">Slips</div>
       ${this.slipsHtml(P.slips)}
-      <div class="dd-hint">Each segment keeps its own reputation. A slip's size limits which vessels can dock here; the number of slips is how many ferries can berth at once — short a slip, arrivals wait offshore and run late.</div>
-      ${this.routesHtml(P)}`;
+      <div class="dd-hint">Each segment keeps its own reputation. A slip's size limits which vessels can dock here; short a slip, arrivals wait offshore and run late.</div>`;
   }
 
-  /** Existing connections from this port, plus candidate ports to open a new direct route to. */
+  /** Routes touching this port (with fare steppers) + candidates for new direct routes. */
   private routesHtml(P: PortState): string {
+    const stepper = (R: RouteState, kind: "foot" | "car"): string => {
+      const cur = kind === "foot" ? R.footPrice : R.carPrice;
+      return `<div class="price">
+        <span>${kind === "foot" ? "Foot" : "Car"}</span>
+        <button data-pr="${R.def.id}:${kind}:dn">−</button>
+        <b data-live="price:${R.def.id}:${kind}">$${cur}</b>
+        <button data-pr="${R.def.id}:${kind}:up">+</button>
+      </div>`;
+    };
     const existing = this.routesForPort(P.def.id)
       .map((R) => {
         const otherId = R.def.from === P.def.id ? R.def.to : R.def.from;
         const other = this.state.ports[otherId];
         return `<div class="route-exist">
-          <span class="dot" style="background:${R.def.color}"></span>
-          <span>${other.def.name}</span><em>${R.def.distanceNm} nm</em></div>`;
+          <div class="re-head">
+            <span class="dot" style="background:${R.def.color}"></span>
+            <span class="re-name">→ ${other.def.name}</span>
+            <em>${R.def.distanceNm} nm · ${R.def.crossingMin} min</em>
+          </div>
+          <div class="price-row">${stepper(R, "foot")}${stepper(R, "car")}</div>
+        </div>`;
       })
       .join("");
 
@@ -472,13 +486,13 @@ export class Panel {
       })
       .join("");
 
-    return `<div class="dd-routes-title">Routes${existing ? "" : " — none yet"}</div>
+    return `<div class="dd-routes-title">Routes &amp; fares${existing ? "" : " — none yet"}</div>
       ${existing ? `<div class="dd-routes">${existing}</div>` : ""}
       ${
         candidates.length
           ? `<div class="dd-routes-title">Open a new route</div>
              <div class="dd-route-candidates">${candRows}</div>`
-          : `<div class="dd-hint">All docked ports are already connected directly.</div>`
+          : ""
       }`;
   }
 
@@ -486,61 +500,27 @@ export class Panel {
 
   updateHud(): void {
     const s = this.state;
-    this.setText("[data-cash]", money(s.cash));
-    this.setText("[data-day]", `${s.day} ${weekdayName(s.day)}${isWeekend(s.day) ? " 🎉" : ""}`);
-    const season = seasonOf(s.day);
-    this.setText("[data-season]", `${season.icon} ${season.name}`);
-    this.setText("[data-clock]", clockStr(s.clock));
-    this.setText("[data-rep]", String(Math.round(s.rep)));
-    this.setText("[data-value]", money(s.companyValue));
-
+    this.cashEl.textContent = money(s.cash);
+    this.cashEl.style.color = s.cash < 0 ? "var(--bad)" : "var(--gold)";
+    this.dayLabEl.textContent = `Day ${s.day} · ${weekdayName(s.day)} ${seasonOf(s.day).icon}`;
+    this.clockEl.textContent = clockStr(s.clock);
     const net = this.dailyNet();
-    this.setText("[data-net]", net === null ? "—" : signed(net));
-    const netEl = document.querySelector<HTMLElement>("[data-net]");
-    if (netEl) netEl.style.color = net === null ? "" : net >= 0 ? "var(--good)" : "var(--bad)";
+    this.netEl.textContent = net === null ? "—" : signed(net);
+    this.netEl.style.color = net === null ? "" : net >= 0 ? "var(--good)" : "var(--bad)";
 
-    // cash warning: turn red and count down to insolvency while in the red
-    const cashEl = document.querySelector<HTMLElement>("[data-cash]");
-    if (cashEl) cashEl.style.color = s.cash < 0 ? "var(--bad)" : "";
     if (s.gameOver) {
       this.showGameOver();
       return;
     }
 
-    for (const id in s.routes) {
-      const R = s.routes[id];
-      const a = s.ports[R.def.from];
-      const b = s.ports[R.def.to];
-      if (!a.slips.length || !b.slips.length) continue;
-      const P = this.islandEnd(R);
-      this.setText(`[data-wait="${id}"]`, Math.round(waitingPeople(P)).toLocaleString());
-      this.setText(`[data-routerep="${id}"]`, String(Math.round(P.rep)));
-      const bar = document.querySelector<HTMLElement>(`[data-routerepbar="${id}"]`);
-      if (bar) {
-        bar.style.width = P.rep + "%";
-        bar.style.background = repColor(P.rep);
-      }
-      const sw = segWaiting(P);
-      for (const g of CONFIG.segments) {
-        this.setText(`[data-segwait="${id}:${g.id}"]`, String(Math.round(sw[g.id])));
-      }
-    }
+    if (!this.companyView.hidden) this.refreshCompany();
 
     if (this.selectedDock) {
-      // only rebuild the DOM when the panel's shape changes (so buttons stay
+      // only rebuild the sheet DOM when its shape changes (so buttons stay
       // clickable); otherwise just patch the live numbers in place.
       if (this.dockKey(this.selectedDock) !== this.detailKey) this.renderDockDetail();
       else this.refreshDockDetail();
     }
-    // keep buy affordability fresh (berth / size / cash gating)
-    this.buyWrap
-      .querySelectorAll<HTMLButtonElement>(".buy-card")
-      .forEach((btn, i) => (btn.disabled = buyBlocker(s, CONFIG.vesselClasses[i].id) !== null));
-    // a boat can only be sold while it isn't mid-operation
-    this.fleetEl.querySelectorAll<HTMLButtonElement>(".fleet-sell").forEach((btn) => {
-      const b = s.boats.find((x) => String(x.id) === btn.dataset.boat);
-      btn.disabled = !b || b.phase !== "idle";
-    });
   }
 
   private showGameOver(): void {
@@ -560,10 +540,5 @@ export class Panel {
       location.reload();
     });
     document.getElementById("app")!.appendChild(el);
-  }
-
-  private setText(sel: string, text: string): void {
-    const el = document.querySelector(sel);
-    if (el) el.textContent = text;
   }
 }

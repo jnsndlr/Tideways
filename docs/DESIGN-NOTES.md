@@ -75,15 +75,18 @@ The economy spine (#1) and fleet expansion (#2) from the old list are DONE. The 
 interleaves mobile-viability work with sim depth, so the deep sim gets tested on the platform
 it's meant for. Stop and review after each milestone.
 
-1. **Save/load + PWA shell.** Serialize `GameState` to localStorage (autosave + restore on
-   load); manifest + service worker for installability. Mobile table stakes — without it the
-   prototype can't be play-tested on a phone. Smallest milestone; do first.
-2. **Weekday/weekend + seasons.** Day-of-week and season multipliers on per-segment demand
-   volume. Cheapest depth in the game: one timetable stops being optimal forever, and fleet
-   sizing becomes a repeating seasonal decision (needs vessel resale, see notes below).
-3. **Mobile UI restructure.** Bottom tab bar (Map · Schedule · Company), dock detail as a
-   bottom sheet, 44px touch targets, safe-area insets, HUD slimmed to Cash / Net / Day+Time /
-   speed. Route cards dissolve into the map + port sheet.
+1. **Save/load + PWA shell.** — DONE 2026-07-01. localStorage autosave (5s + tab-hide +
+   pagehide), versioned defensive deserialize, manifest/icon/service worker, new-game paths
+   clear the save.
+2. **Weekday/weekend + seasons.** — DONE 2026-07-01. `weekendMult`/`seasonMult` per segment
+   (`src/sim/calendar.ts`); vessel resale added; cost model reworked the same day (see
+   "Activity-based vessel costs" below).
+3. **Mobile UI restructure.** — DONE 2026-07-01. Bottom tab bar (Map · Schedule · Company);
+   dock detail is a bottom sheet; route cards dissolved into the port sheet (fares live
+   there now); HUD slimmed to Cash / Day+Time+Season / Net + a two-button speed control
+   (pause toggle + 1×/2×/4× cycle — four buttons didn't fit 375px); 44px touch targets;
+   safe-area insets; company tab holds ledger/stats/fleet/buy. Perf item done: `updateHud`
+   uses cached element refs only — no per-frame document-wide `querySelector`.
 4. **Community growth loop ("the heart").** Promote per-port `pop`/`draw` from static config
    to living state; weekly growth tick driven by rep, served-ratio, and capacity headroom;
    visible town tiers on the map. Per-segment growth doubles as the community-identity

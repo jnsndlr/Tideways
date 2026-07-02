@@ -44,7 +44,6 @@ const panel = new Panel(state, {
   },
   onBuildDock: (portId) => {
     if (buildDock(state, portId)) {
-      panel.buildRoutes();
       timeline.rebuild();
       panel.selectDock(portId); // re-render detail, now an open dock
     }
@@ -64,7 +63,6 @@ const panel = new Panel(state, {
   },
   onOpenRoute: (fromId, toId) => {
     if (openRoute(state, fromId, toId)) {
-      panel.buildRoutes(); // new card in the routes list
       timeline.rebuild(); // new chip schedulable on the timetable
       panel.selectDock(fromId); // re-render detail, candidate list updated
     }
@@ -76,6 +74,22 @@ const panel = new Panel(state, {
 });
 
 timeline = new Timeline(state, () => panel.buildFleet());
+
+// ---- Bottom tab bar: Map (base) · Schedule · Company -----------------------
+
+const tabViews: Record<string, HTMLElement | null> = {
+  schedule: document.getElementById("view-schedule"),
+  company: document.getElementById("view-company"),
+};
+document.querySelectorAll<HTMLButtonElement>("#tabbar button").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const tab = btn.dataset.tab!;
+    for (const name in tabViews) tabViews[name]!.hidden = name !== tab;
+    document
+      .querySelectorAll("#tabbar button")
+      .forEach((b) => b.classList.toggle("active", b === btn));
+  });
+});
 
 // ---- Map camera: tap to select, drag/swipe to pan, wheel/pinch to zoom ----
 

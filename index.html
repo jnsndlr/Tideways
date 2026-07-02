@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
     />
     <title>Tideways — PNW Ferry Sim (Prototype v0.1)</title>
     <meta name="theme-color" content="#0e2533" />
@@ -18,45 +18,43 @@
     <div id="app">
       <div id="hud">
         <div class="stat" id="cash">
-          <span class="label">Cash</span><span class="val" data-cash>$100,000</span>
-        </div>
-        <div class="stat"><span class="label">Day</span><span class="val" data-day>1 Mon</span></div>
-        <div class="stat">
-          <span class="label">Time</span><span class="val" data-clock>06:00</span>
+          <span class="label">Cash</span><span class="val" data-cash>$0</span>
         </div>
         <div class="stat">
-          <span class="label">Season</span><span class="val" data-season>🌸</span>
+          <span class="label" data-daylab>Day 1 · Mon</span><span class="val" data-clock>06:00</span>
         </div>
         <div class="stat">
-          <span class="label">Reputation</span><span class="val" data-rep>80</span>
-        </div>
-        <div class="stat">
-          <span class="label">Value</span><span class="val" data-value>$150,000</span>
-        </div>
-        <div class="stat">
-          <span class="label">Net/day</span><span class="val" data-net>$0</span>
+          <span class="label">Net/day</span><span class="val" data-net>—</span>
         </div>
         <div class="spacer"></div>
         <div id="speed">
-          <button data-speed="0">⏸</button>
-          <button data-speed="1" class="active">1×</button>
-          <button data-speed="2">2×</button>
-          <button data-speed="4">4×</button>
+          <button id="speed-pause">⏸</button>
+          <button id="speed-cycle">1×</button>
         </div>
       </div>
 
-      <div id="map-wrap"><canvas id="cv"></canvas></div>
+      <div id="main">
+        <div id="map-wrap"><canvas id="cv"></canvas></div>
 
-      <div id="panel">
-        <div class="panel-title">Timetable — drag a route onto a ferry's lane</div>
-        <div id="timeline"></div>
-        <div class="panel-title">Routes &amp; demand</div>
-        <div id="routes"></div>
-        <div class="panel-title">Fleet</div>
-        <div id="fleet"></div>
-        <div id="buy-wrap"></div>
-        <button id="new-game">⟳ Start a new company</button>
+        <section id="view-schedule" class="tabview" hidden>
+          <div class="panel-title">Timetable — drag a route onto a ferry's lane</div>
+          <div id="timeline"></div>
+        </section>
+
+        <section id="view-company" class="tabview" hidden>
+          <div id="company"></div>
+          <div class="panel-title">Fleet</div>
+          <div id="fleet"></div>
+          <div id="buy-wrap"></div>
+          <button id="new-game">⟳ Start a new company</button>
+        </section>
       </div>
+
+      <nav id="tabbar">
+        <button data-tab="map" class="active"><i>🗺️</i><span>Map</span></button>
+        <button data-tab="schedule"><i>🕑</i><span>Schedule</span></button>
+        <button data-tab="company"><i>⚓</i><span>Company</span></button>
+      </nav>
     </div>
 
     <script type="module" src="/src/main.ts"></script>
