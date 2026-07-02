@@ -5,7 +5,7 @@ import type { PortDef, RouteDef, SeasonDef, SegmentDef, Vec2, VesselClass } from
 // =============================================================================
 
 export const CONFIG = {
-  startCash: 500_000,
+  startCash: 5_000_000,
 
   // Time
   gameMinPerSec: 6,
