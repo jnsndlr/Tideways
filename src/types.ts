@@ -17,7 +17,8 @@ export interface VesselClass {
   speedFactor: number; // >1 faster: crossing = route.crossingMin / speedFactor
   fuelPerNm: number; // $ per nautical mile per crossing
   cost: number;
-  dailyCost: number; // fixed daily overhead to own the hull (idle or not)
+  moorageDaily: number; // small fixed daily cost to own the hull (moorage/insurance)
+  crewPerSailing: number; // crew wages charged per departure (each leg of a round trip)
 }
 
 export interface SegmentDef {
@@ -30,6 +31,14 @@ export interface SegmentDef {
   elastFoot: number; // price elasticity (foot)
   elastCar: number; // price elasticity (car)
   peaks: [number, number, number][]; // [centerMin, widthMin, height] daily curve
+  weekendMult: number; // volume multiplier on weekend days (weekday = 1.0)
+  seasonMult: Record<string, number>; // volume multiplier by season id (missing = 1.0)
+}
+
+export interface SeasonDef {
+  id: string;
+  name: string;
+  icon: string;
 }
 
 // A port is a place: the mainland hub or an island. Gravity weights drive O/D
@@ -128,8 +137,10 @@ export interface GameState {
   tripCounter: number;
   hubId: string; // id of the hub port (home berths live there)
   fuelToday: number; // fuel $ spent so far today (accumulates; reset at rollover)
+  crewToday: number; // crew wages $ paid so far today (per departed sailing)
   revenueToday: number; // fare $ taken so far today
   fuelYesterday: number; // previous full day's fuel spend (stable readout)
+  crewYesterday: number; // previous full day's crew wages
   revenueYesterday: number; // previous full day's fare revenue
   daysInDebt: number; // consecutive day rollovers ending with cash < 0
   gameOver: boolean;

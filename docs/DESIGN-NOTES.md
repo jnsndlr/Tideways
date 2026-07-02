@@ -109,6 +109,19 @@ staffing tier comes first, likely alongside #5 or after #7); full 3D.
 `document.querySelector` calls per frame (`src/ui/panel.ts`) — cache element references once
 at build time. Free battery on mobile.
 
+## Activity-based vessel costs (decided 2026-07-01, built with milestone #2)
+
+The flat `dailyCost` per hull made selling the only sane off-season move. Replaced with:
+- **`moorageDaily`** — small fixed cost of owning the hull (~20% of the old flat cost)
+- **`crewPerSailing`** — charged at every departure (a round trip = 2 sailings), on top of
+  per-crossing fuel; wear joins later with the maintenance milestone
+
+At a packed ~24-sailing day the two roughly match the old flat overhead, so full-utilization
+balance is preserved. Winter-week check (3 Hiyus): full schedules −$3.1k/day, **half
+schedules +$9.1k/day**, sell-one +$0.6k/day — thinning the timetable now beats selling, and
+an idle hull costs only moorage. `crewPerSailing` is still a placeholder the real crew
+system will replace (min-crew wage floor + staffing tiers).
+
 ## Model-level notes (observed 2026-07-01, not yet scheduled)
 
 - **Transfer fare/rep asymmetry:** fares and rep are both credited at *boarding*, so a rider

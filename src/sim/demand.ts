@@ -1,5 +1,6 @@
 import { CONFIG, nmBetween } from "../config";
 import type { GameState, RouteState, SegmentDef } from "../types";
+import { demandDayFactor } from "./calendar";
 import { carPriceFactor, footPriceFactor, repFactor } from "./demandResponse";
 import { getRouting } from "./routing";
 
@@ -81,7 +82,8 @@ export function accrueDemand(state: GameState, dtMin: number): void {
     if (sum <= 0) continue;
     const curve = segCurve(seg, state.clock) / SEG_AREA[seg.id];
     if (curve <= 0) continue;
-    const volume = segDailyVolume(state, seg.id);
+    // calendar rhythm: weekday/weekend and season scale today's volume
+    const volume = segDailyVolume(state, seg.id) * demandDayFactor(seg, state.day);
     for (const { from, to, w } of pairs) {
       const O = state.ports[from];
       // people wanting this trip in this slice, before mode split / response

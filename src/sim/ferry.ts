@@ -109,10 +109,13 @@ export function arriveAt(state: GameState, boat: Boat, port: string): void {
   refreshPax(boat);
 }
 
-export function chargeFuel(state: GameState, boat: Boat, R: RouteState): void {
-  const cost = R.def.distanceNm * vesselById(boat.classId).fuelPerNm;
-  state.cash -= cost;
-  state.fuelToday += cost;
+/** Costs of one departure: fuel for the crossing + the sailing's crew wages. */
+export function chargeSailing(state: GameState, boat: Boat, R: RouteState): void {
+  const vc = vesselById(boat.classId);
+  const fuel = R.def.distanceNm * vc.fuelPerNm;
+  state.cash -= fuel + vc.crewPerSailing;
+  state.fuelToday += fuel;
+  state.crewToday += vc.crewPerSailing;
 }
 
 /** Boats currently occupying a berth at a port (loading). */
@@ -151,7 +154,7 @@ export function stepBoat(state: GameState, boat: Boat, dtMin: number): void {
       boat.timer += dtMin;
       if (boat.timer >= CONFIG.loadMinutes) {
         boardAt(state, boat, R.def.from, R.def.to, R);
-        chargeFuel(state, boat, R);
+        chargeSailing(state, boat, R);
         R.sailingsToday++;
         boat.phase = "out";
         boat.atPort = null;
@@ -188,7 +191,7 @@ export function stepBoat(state: GameState, boat: Boat, dtMin: number): void {
       boat.timer += dtMin;
       if (boat.timer >= CONFIG.loadMinutes) {
         boardAt(state, boat, R.def.to, R.def.from, R);
-        chargeFuel(state, boat, R);
+        chargeSailing(state, boat, R);
         boat.phase = "back";
         boat.atPort = null;
         boat.p = 1;

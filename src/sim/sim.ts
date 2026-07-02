@@ -55,14 +55,17 @@ export function step(state: GameState, dtMin: number): void {
       state.routes[id].sailingsToday = 0;
     }
     state.fuelYesterday = state.fuelToday;
+    state.crewYesterday = state.crewToday;
     state.revenueYesterday = state.revenueToday;
     state.fuelToday = 0;
+    state.crewToday = 0;
     state.revenueToday = 0;
 
-    // fleet upkeep: every hull costs its daily overhead, sailing or idle
-    let upkeep = 0;
-    for (const b of state.boats) upkeep += vesselById(b.classId).dailyCost;
-    state.cash -= upkeep;
+    // moorage: the small fixed cost of owning each hull (idle boats are cheap
+    // to keep — the real money goes out per sailing: crew + fuel)
+    let moorage = 0;
+    for (const b of state.boats) moorage += vesselById(b.classId).moorageDaily;
+    state.cash -= moorage;
 
     // solvency: run in the red too long and the company folds
     state.daysInDebt = state.cash < 0 ? state.daysInDebt + 1 : 0;

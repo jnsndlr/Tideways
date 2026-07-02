@@ -99,6 +99,24 @@ canvas {
   touch-action: none; /* we handle pinch/pan ourselves */
 }
 
+.fleet-sell {
+  margin-left: auto;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--txt-dim);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.fleet-sell:disabled {
+  opacity: 0.35;
+}
+.fleet-sell:not(:disabled):active {
+  color: var(--gold);
+  border-color: var(--gold);
+}
+
 #new-game {
   display: block;
   margin: 14px auto 4px;

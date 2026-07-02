@@ -37,8 +37,10 @@ interface SaveData {
   rep: number;
   companyValue: number;
   fuelToday: number;
+  crewToday: number;
   revenueToday: number;
   fuelYesterday: number;
+  crewYesterday: number;
   revenueYesterday: number;
   daysInDebt: number;
   gameOver: boolean;
@@ -83,8 +85,10 @@ export function serialize(state: GameState): string {
     rep: state.rep,
     companyValue: state.companyValue,
     fuelToday: state.fuelToday,
+    crewToday: state.crewToday,
     revenueToday: state.revenueToday,
     fuelYesterday: state.fuelYesterday,
+    crewYesterday: state.crewYesterday,
     revenueYesterday: state.revenueYesterday,
     daysInDebt: state.daysInDebt,
     gameOver: state.gameOver,
@@ -151,8 +155,10 @@ export function deserialize(raw: string): GameState | null {
     state.rep = num(d.rep, state.rep);
     state.companyValue = num(d.companyValue, state.cash);
     state.fuelToday = num(d.fuelToday, 0);
+    state.crewToday = num(d.crewToday, 0); // absent in pre-crew saves -> 0
     state.revenueToday = num(d.revenueToday, 0);
     state.fuelYesterday = num(d.fuelYesterday, 0);
+    state.crewYesterday = num(d.crewYesterday, 0);
     state.revenueYesterday = num(d.revenueYesterday, 0);
     state.daysInDebt = Math.max(0, Math.round(num(d.daysInDebt, 0)));
     state.gameOver = d.gameOver === true;

@@ -10,6 +10,7 @@ import {
   loadGame,
   openRoute,
   saveGame,
+  sellBoat,
   upgradeSlip,
 } from "./sim";
 import { MapRenderer } from "./render/canvas";
@@ -31,6 +32,12 @@ const panel = new Panel(state, {
   },
   onBuy: (classId) => {
     if (buyBoat(state, classId)) timeline.rebuild(); // new lane on the timetable
+  },
+  onSell: (boatId) => {
+    if (sellBoat(state, boatId)) {
+      timeline.rebuild(); // lane removed
+      panel.buildFleet(); // row removed, berth freed
+    }
   },
   onSpeed: (speed) => {
     state.speed = speed;

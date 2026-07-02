@@ -2,7 +2,7 @@
 // and run on Node (`npm test`) — the sim is DOM-free by design, so it runs
 // without a browser. Covers routing, hub transfers, per-leg fares, and the
 // gravity demand generator.
-import { CONFIG } from "../src/config";
+import { CONFIG, vesselById } from "../src/config";
 import {
   createState,
   advance,
@@ -13,6 +13,13 @@ import {
   openRoute,
   serialize,
   deserialize,
+  demandDayFactor,
+  isWeekend,
+  seasonOf,
+  weekdayName,
+  sellBoat,
+  sellPrice,
+  buyBlocker,
 } from "../src/sim";
 
 let failures = 0;
@@ -118,6 +125,70 @@ function check(name: string, cond: boolean, detail?: unknown) {
   }
   check("corrupt save rejected", deserialize("{ nope") === null);
   check("wrong version rejected", deserialize('{"v":999}') === null);
+}
+
+// ---- 5. calendar rhythm: weekday/weekend + seasons --------------------------
+{
+  check("day 1 is a Monday in spring", weekdayName(1) === "Mon" && seasonOf(1).id === "spring");
+  check("day 6 is a weekend", isWeekend(6) && weekdayName(6) === "Sat");
+  check("day 8 wraps to Monday", weekdayName(8) === "Mon" && !isWeekend(8));
+
+  const commuter = CONFIG.segments.find((s) => s.id === "commuter")!;
+  const tourist = CONFIG.segments.find((s) => s.id === "tourist")!;
+  check("weekday commuter factor is 1", demandDayFactor(commuter, 1) === 1);
+  check("weekend guts commuters", demandDayFactor(commuter, 6) < 0.5, demandDayFactor(commuter, 6));
+  check("weekend boosts tourists", demandDayFactor(tourist, 6) > 1.2, demandDayFactor(tourist, 6));
+  const summerDay = CONFIG.calendar.daysPerSeason + 1; // first Monday of summer
+  const winterDay = CONFIG.calendar.daysPerSeason * 3 + 1;
+  check("summer tourist >> winter tourist",
+    demandDayFactor(tourist, summerDay) / demandDayFactor(tourist, winterDay) > 2,
+    [demandDayFactor(tourist, summerDay), demandDayFactor(tourist, winterDay)]);
+
+  // integration: same clock slice, weekday vs weekend, commuter arrivals differ
+  const grow = (day: number): number => {
+    const s = createState();
+    s.day = day;
+    s.clock = 8 * 60; // AM commuter peak
+    advance(s, 30);
+    let p = 0;
+    for (const id in s.ports) p += waitingPeople(s.ports[id], "commuter");
+    return p;
+  };
+  const wk = grow(1);
+  const we = grow(6);
+  check("weekend commuter queue ~35% of weekday", we / wk > 0.3 && we / wk < 0.4, [Math.round(wk), Math.round(we)]);
+}
+
+// ---- 6. vessel resale --------------------------------------------------------
+{
+  const s = createState();
+  const before = s.cash;
+  const boat = s.boats[0];
+  check("cannot sell unknown boat", !sellBoat(s, 999));
+  check("sell idle boat succeeds", sellBoat(s, boat.id));
+  check("resale credited", s.cash === before + vesselById(boat.classId).cost * CONFIG.economy.resaleFactor, s.cash - before);
+  check("fleet empty after sale", s.boats.length === 0);
+  check("berth freed after sale", buyBlocker(s, "hiyu") === null); // cash + berth both fine
+}
+
+// ---- 7. activity-based costs: idle hulls are cheap, sailings pay crew -------
+{
+  const s = createState(); // one Hiyu, no trips scheduled
+  const vc = vesselById(s.boats[0].classId);
+  const cashStart = s.cash;
+  while (s.day === 1) advance(s, 5); // a full day sitting at the dock
+  const idleCost = cashStart - s.cash;
+  check("idle boat pays only moorage", Math.abs(idleCost - vc.moorageDaily) < 0.01, idleCost);
+
+  const s2 = createState();
+  addTrip(s2, s2.boats[0], "r-lopez", 7 * 60);
+  while (s2.day === 1) advance(s2, 5);
+  check(
+    "one round trip pays crew for two sailings",
+    Math.abs(s2.crewYesterday - 2 * vc.crewPerSailing) < 0.01,
+    s2.crewYesterday,
+  );
+  check("sailing burned fuel", s2.fuelYesterday > 0, Math.round(s2.fuelYesterday));
 }
 
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURE(S)`);

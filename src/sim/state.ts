@@ -55,8 +55,10 @@ export function createState(): GameState {
     tripCounter: 0,
     hubId: HUB_ID,
     fuelToday: 0,
+    crewToday: 0,
     revenueToday: 0,
     fuelYesterday: 0,
+    crewYesterday: 0,
     revenueYesterday: 0,
     daysInDebt: 0,
     gameOver: false,
@@ -103,6 +105,23 @@ export function buyBoat(state: GameState, classId: string): Boat | null {
   if (buyBlocker(state, classId) !== null) return null;
   state.cash -= vesselById(classId).cost;
   return addBoat(state, classId);
+}
+
+/** What selling a hull returns (the resale share of its purchase price). */
+export function sellPrice(classId: string): number {
+  return vesselById(classId).cost * CONFIG.economy.resaleFactor;
+}
+
+/** Sell an owned vessel (must not be mid-operation). Frees its home berth and
+ *  discards its timetable — this is the lever that makes seasonal fleet-sizing
+ *  a real decision instead of a ratchet. */
+export function sellBoat(state: GameState, boatId: number): boolean {
+  const i = state.boats.findIndex((b) => b.id === boatId);
+  if (i < 0) return false;
+  if (state.boats[i].phase !== "idle") return false; // finish the crossing first
+  state.cash += sellPrice(state.boats[i].classId);
+  state.boats.splice(i, 1);
+  return true;
 }
 
 /** Add a trip (round trip on a route) to a boat's daily itinerary, sorted. */

@@ -9,6 +9,8 @@ import {
   addTrip,
   dailyODByPair,
   earliestFreeSlot,
+  seasonOf,
+  weekdayName,
 } from "../src/sim";
 import type { GameState } from "../src/types";
 
@@ -72,14 +74,24 @@ function reportOperations(days: number): void {
   });
 
   const startCash = state.cash;
-  while (state.day <= days) advance(state, 5);
+  const moorage = state.boats.reduce((a, b) => a + vesselById(b.classId).moorageDaily, 0);
 
-  const upkeep = state.boats.reduce((a, b) => a + vesselById(b.classId).dailyCost, 0);
+  // per-day ledger across the run — shows the weekly/seasonal rhythm
+  console.log(`\n=== B. OPERATIONS (${boats.length} Hiyus, dedicated, ${days} days) ===`);
+  console.log(`  ${padr("day", 12)} ${pad("revenue", 10)} ${pad("fuel", 9)} ${pad("crew", 9)} ${pad("net", 9)}`);
+  for (let d = 1; d <= days; d++) {
+    while (state.day === d) advance(state, 5);
+    const dayNet = state.revenueYesterday - state.fuelYesterday - state.crewYesterday - moorage;
+    const label = `${d} ${weekdayName(d)} ${seasonOf(d).icon}`;
+    console.log(
+      `  ${padr(label, 12)} ${pad("$" + n(state.revenueYesterday), 10)} ${pad("-$" + n(state.fuelYesterday), 9)} ${pad("-$" + n(state.crewYesterday), 9)} ${pad(("$" + n(dayNet)).replace("$-", "-$"), 9)}`,
+    );
+  }
   const rev = state.revenueYesterday;
   const fuel = state.fuelYesterday;
-  const net = rev - fuel - upkeep;
+  const crew = state.crewYesterday;
+  const net = rev - fuel - crew - moorage;
 
-  console.log(`\n=== B. OPERATIONS (${boats.length} Hiyus, dedicated, day ${days}) ===`);
   console.log(`  ${padr("port", 16)} ${pad("sailings", 9)} ${pad("served", 9)} ${pad("balked", 9)} ${pad("balk%", 7)}`);
   for (const rid of routes) {
     const R = state.routes[rid];
@@ -99,7 +111,8 @@ function reportOperations(days: number): void {
   console.log("\n  economy (per day):");
   console.log(`    fare revenue : ${pad("$" + n(rev), 10)}`);
   console.log(`    fuel         : ${pad("-$" + n(fuel), 10)}   (${pct(fuel / Math.max(1, rev))} of revenue)`);
-  console.log(`    fleet upkeep : ${pad("-$" + n(upkeep), 10)}`);
+  console.log(`    crew         : ${pad("-$" + n(crew), 10)}`);
+  console.log(`    moorage      : ${pad("-$" + n(moorage), 10)}`);
   console.log(`    ---`);
   console.log(`    net/day      : ${pad(("$" + n(net)).replace("$-", "-$"), 10)}`);
   console.log(`    cash now     : $${n(state.cash)}  (started $${n(startCash)}, day ${state.day})`);

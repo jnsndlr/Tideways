@@ -536,6 +536,8 @@ Expenses include:
 * Research
 * Vessel purchases
 
+Cost structure principle: owning a hull costs only modest daily moorage/insurance — the dominant costs follow activity (crewed sailings, fuel, and later wear). A vessel sitting at the dock, or thinned to a few runs a day to match off-season demand, is cheap to keep. This makes seasonal strategy a spectrum (full schedule → thinned schedule → idle hull → sell) rather than a binary keep/sell.
+
 ⸻
 
 Fuel

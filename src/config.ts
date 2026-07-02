@@ -1,4 +1,4 @@
-import type { PortDef, RouteDef, SegmentDef, Vec2, VesselClass } from "./types";
+import type { PortDef, RouteDef, SeasonDef, SegmentDef, Vec2, VesselClass } from "./types";
 
 // =============================================================================
 // CONFIG — all tunable model numbers (model-first balancing). v0.3.
@@ -15,13 +15,17 @@ export const CONFIG = {
   lateGraceMin: 10, // a sailing that departs later than this past schedule earns no goodwill
   avgOccupancy: 2.0, // people per car
 
-  // Vessel classes (toy-scaled, PNW-flavoured). dailyCost = fixed overhead per
-  // day just to own/crew the hull, charged whether it sails or sits idle.
+  // Vessel classes (toy-scaled, PNW-flavoured). Owning a hull costs a small
+  // fixed moorageDaily; the dominant costs follow ACTIVITY — crewPerSailing is
+  // charged at every departure (a round trip = 2 sailings) on top of fuel. A
+  // boat sitting at the dock, or thinned to a few runs a day, is cheap to keep;
+  // a packed timetable is what costs money. (At a full ~24-sailing day these
+  // roughly match the old flat daily overhead.)
   vesselClasses: [
-    { id: "po", name: "Passenger Express", short: "Express", peopleCap: 300, carCap: 0, speedFactor: 1.5, fuelPerNm: 35, cost: 200_000, dailyCost: 3_000 },
-    { id: "hiyu", name: "M/V Hiyu", short: "Hiyu", peopleCap: 200, carCap: 34, speedFactor: 1.0, fuelPerNm: 70, cost: 320_000, dailyCost: 7_000 },
-    { id: "medium", name: "M/V Issaquah", short: "Issaquah", peopleCap: 500, carCap: 80, speedFactor: 1.0, fuelPerNm: 105, cost: 650_000, dailyCost: 13_000 },
-    { id: "large", name: "M/V Jumbo", short: "Jumbo", peopleCap: 900, carCap: 150, speedFactor: 0.9, fuelPerNm: 150, cost: 1_050_000, dailyCost: 22_000 },
+    { id: "po", name: "Passenger Express", short: "Express", peopleCap: 300, carCap: 0, speedFactor: 1.5, fuelPerNm: 35, cost: 200_000, moorageDaily: 700, crewPerSailing: 70 },
+    { id: "hiyu", name: "M/V Hiyu", short: "Hiyu", peopleCap: 200, carCap: 34, speedFactor: 1.0, fuelPerNm: 70, cost: 320_000, moorageDaily: 1_500, crewPerSailing: 230 },
+    { id: "medium", name: "M/V Issaquah", short: "Issaquah", peopleCap: 500, carCap: 80, speedFactor: 1.0, fuelPerNm: 105, cost: 650_000, moorageDaily: 2_800, crewPerSailing: 420 },
+    { id: "large", name: "M/V Jumbo", short: "Jumbo", peopleCap: 900, carCap: 150, speedFactor: 0.9, fuelPerNm: 150, cost: 1_050_000, moorageDaily: 4_500, crewPerSailing: 700 },
   ] as VesselClass[],
   startVessel: "hiyu",
 
@@ -35,6 +39,21 @@ export const CONFIG = {
   // Charged PER BOARDED LEG — a multi-leg journey pays each leg it rides.
   fare: { foot: 14, car: 30 },
   priceBounds: { footMin: 4, footMax: 40, carMin: 10, carMax: 90, step: 2 },
+
+  // Calendar — weekly + seasonal demand rhythm. Day 1 is a Monday in spring.
+  // A compressed year (daysPerSeason × 4 days) keeps seasonal re-planning on a
+  // prototype-friendly cadence; raise daysPerSeason for a slower year.
+  calendar: {
+    weekdayNames: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+    weekendDays: [5, 6], // indices into weekdayNames (Sat, Sun)
+    daysPerSeason: 7,
+    seasons: [
+      { id: "spring", name: "Spring", icon: "\u{1F338}" },
+      { id: "summer", name: "Summer", icon: "\u{2600}\u{FE0F}" },
+      { id: "fall", name: "Fall", icon: "\u{1F342}" },
+      { id: "winter", name: "Winter", icon: "\u{2744}\u{FE0F}" },
+    ] as SeasonDef[],
+  },
 
   // Balking
   balkRatePerMin: 0.004,
@@ -83,22 +102,30 @@ export const CONFIG = {
     tripsPerResident: { commuter: 0.6, tourist: 0.85, freight: 1.0 } as Record<string, number>,
   },
 
-  // Demand segments — distinct behaviour so levers conflict
+  // Demand segments — distinct behaviour so levers conflict. weekendMult and
+  // seasonMult scale each segment's daily volume by calendar day, so one
+  // timetable can't be optimal all week (or all year).
   segments: [
     {
       id: "commuter", name: "Commuters", color: "#57b6e0", icon: "\u{1F4BC}",
       patienceMin: 55, carShare: 0.35, elastFoot: 0.4, elastCar: 0.3,
       peaks: [[8 * 60, 55, 2.6], [17 * 60, 70, 2.3]], // sharp AM + PM peaks
+      weekendMult: 0.35, // weekends: barely anyone commutes
+      seasonMult: { winter: 0.95 },
     },
     {
       id: "tourist", name: "Tourists", color: "#f3c14b", icon: "\u{1F392}",
       patienceMin: 160, carShare: 0.38, elastFoot: 1.3, elastCar: 0.9,
       peaks: [[12 * 60, 150, 1.6]], // broad midday
+      weekendMult: 1.6, // weekend getaways surge
+      seasonMult: { spring: 0.9, summer: 1.5, fall: 0.8, winter: 0.45 },
     },
     {
       id: "freight", name: "Freight", color: "#e06f4f", icon: "\u{1F4E6}",
       patienceMin: 90, carShare: 1.0, elastFoot: 0.2, elastCar: 0.2,
       peaks: [[10 * 60, 240, 0.7], [15 * 60, 240, 0.7]], // steady daytime
+      weekendMult: 0.5, // light weekend deliveries
+      seasonMult: { summer: 1.1, winter: 0.9 },
     },
   ] as SegmentDef[],
 

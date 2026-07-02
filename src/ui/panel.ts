@@ -3,12 +3,16 @@ import {
   addSlipCost,
   buyBlocker,
   clearSave,
+  isWeekend,
   openRouteCost,
   repFactor,
   routeCandidates,
+  seasonOf,
   segWaiting,
+  sellPrice,
   slipUpgradeCost,
   waitingPeople,
+  weekdayName,
 } from "../sim";
 import { repColor } from "../render/canvas";
 import type { GameState, PortState, RouteState } from "../types";
@@ -27,6 +31,7 @@ const portPopulation = (P: PortState): number =>
 export interface PanelCallbacks {
   onSetPrice: (routeId: string, kind: "foot" | "car", price: number) => void;
   onBuy: (classId: string) => void;
+  onSell: (boatId: number) => void;
   onSpeed: (speed: number) => void;
   onBuildDock: (portId: string) => void;
   onAddSlip: (portId: string) => void;
@@ -164,7 +169,12 @@ export class Panel {
         <span class="fleet-name">⛴ ${boat.name}</span>
         <span class="fleet-class">${vc.short}</span>
         <span class="fleet-cap">${vc.peopleCap}p${vc.carCap ? " · " + vc.carCap + "🚗" : " · no cars"}</span>
-        <span class="fleet-trips">${boat.itinerary.length} sailings</span>`;
+        <span class="fleet-trips">${boat.itinerary.length} sailings</span>
+        <button class="fleet-sell" data-boat="${boat.id}">Sell ${money(sellPrice(boat.classId))}</button>`;
+      row.querySelector(".fleet-sell")!.addEventListener("click", () => {
+        if (confirm(`Sell ${boat.name} for ${money(sellPrice(boat.classId))}? Its timetable is discarded.`))
+          this.cb.onSell(boat.id);
+      });
       this.fleetEl.appendChild(row);
     }
     this.buildBuyMenu();
@@ -195,7 +205,7 @@ export class Panel {
       btn.innerHTML = `
         <b>${vc.short}</b>
         <span>${vc.peopleCap}p ${vc.carCap ? vc.carCap + "🚗" : "no cars"}</span>
-        <span>${money(vc.dailyCost)}/day upkeep</span>
+        <span>${money(vc.crewPerSailing)}/sailing crew · ${money(vc.moorageDaily)}/day</span>
         <em>${money(vc.cost)}</em>${note}`;
       btn.onclick = () => {
         this.cb.onBuy(vc.id);
@@ -284,7 +294,8 @@ export class Panel {
       const fpct = has && rev > 0 ? Math.round((fuel / rev) * 100) + "%" : "—";
       this.setIn("[data-hub-rev]", has ? signed(rev) : "—");
       this.setIn("[data-hub-fuel]", has ? signed(-fuel) + " · " + fpct : "—");
-      this.setIn("[data-hub-upkeep]", signed(-this.fleetUpkeep()));
+      this.setIn("[data-hub-crew]", has ? signed(-this.state.crewYesterday) : "—");
+      this.setIn("[data-hub-upkeep]", signed(-this.fleetMoorage()));
       const netEl = this.detailEl.querySelector<HTMLElement>("[data-hub-net]");
       if (netEl) {
         netEl.textContent = net === null ? "—" : signed(net);
@@ -320,15 +331,20 @@ export class Panel {
     if (el) el.textContent = text;
   }
 
-  private fleetUpkeep(): number {
-    return this.state.boats.reduce((a, b) => a + vesselById(b.classId).dailyCost, 0);
+  private fleetMoorage(): number {
+    return this.state.boats.reduce((a, b) => a + vesselById(b.classId).moorageDaily, 0);
   }
 
-  /** Yesterday's full-day profit (revenue − fuel − upkeep), or null on day 1
-   *  when no day has completed yet. */
+  /** Yesterday's full-day profit (revenue − fuel − crew − moorage), or null on
+   *  day 1 when no day has completed yet. */
   private dailyNet(): number | null {
     if (this.state.day <= 1) return null;
-    return this.state.revenueYesterday - this.state.fuelYesterday - this.fleetUpkeep();
+    return (
+      this.state.revenueYesterday -
+      this.state.fuelYesterday -
+      this.state.crewYesterday -
+      this.fleetMoorage()
+    );
   }
 
   private dockHead(name: string, color: string): string {
@@ -374,12 +390,13 @@ export class Panel {
       <div class="dd-rows">
         <div><span>Fare revenue</span><b data-hub-rev>${has ? signed(rev) : "—"}</b></div>
         <div><span>Fuel</span><b data-hub-fuel>${has ? signed(-fuel) + " · " + fpct : "—"}</b></div>
-        <div><span>Fleet upkeep</span><b data-hub-upkeep>${signed(-this.fleetUpkeep())}</b></div>
+        <div><span>Crew sailings</span><b data-hub-crew>${has ? signed(-this.state.crewYesterday) : "—"}</b></div>
+        <div><span>Moorage</span><b data-hub-upkeep>${signed(-this.fleetMoorage())}</b></div>
         <div style="border-top:1px solid rgba(255,255,255,.12);margin-top:2px;padding-top:4px">
           <span>Net / day</span><b data-hub-net style="color:${netColor}">${net === null ? "—" : signed(net)}</b></div>
       </div>
       ${this.slipsHtml(this.hubSlips)}
-      <div class="dd-hint">Berths cap your fleet size; a slip's size sets the largest vessel you can base. Fuel is charged every crossing — running near-empty sailings quietly eats the ledger.</div>`;
+      <div class="dd-hint">Berths cap your fleet size; a slip's size sets the largest vessel you can base. Costs follow activity — every departure pays crew + fuel, so near-empty sailings quietly eat the ledger, while an idle hull only pays moorage.</div>`;
   }
 
   private lockedDockHtml(P: PortState, route: RouteState | null): string {
@@ -470,7 +487,9 @@ export class Panel {
   updateHud(): void {
     const s = this.state;
     this.setText("[data-cash]", money(s.cash));
-    this.setText("[data-day]", String(s.day));
+    this.setText("[data-day]", `${s.day} ${weekdayName(s.day)}${isWeekend(s.day) ? " 🎉" : ""}`);
+    const season = seasonOf(s.day);
+    this.setText("[data-season]", `${season.icon} ${season.name}`);
     this.setText("[data-clock]", clockStr(s.clock));
     this.setText("[data-rep]", String(Math.round(s.rep)));
     this.setText("[data-value]", money(s.companyValue));
@@ -517,6 +536,11 @@ export class Panel {
     this.buyWrap
       .querySelectorAll<HTMLButtonElement>(".buy-card")
       .forEach((btn, i) => (btn.disabled = buyBlocker(s, CONFIG.vesselClasses[i].id) !== null));
+    // a boat can only be sold while it isn't mid-operation
+    this.fleetEl.querySelectorAll<HTMLButtonElement>(".fleet-sell").forEach((btn) => {
+      const b = s.boats.find((x) => String(x.id) === btn.dataset.boat);
+      btn.disabled = !b || b.phase !== "idle";
+    });
   }
 
   private showGameOver(): void {
