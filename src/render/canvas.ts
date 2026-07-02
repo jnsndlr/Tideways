@@ -14,6 +14,8 @@ export class MapRenderer {
   private H = 0;
   private dpr = 1;
   selected: string | null = null;
+  previewFrom: string | null = null;
+  previewTo: string | null = null;
 
   // Camera: the world is a unit square [0,1]². (cx,cy) is the world point
   // sitting at the screen centre; zoom multiplies a uniform fit scale so the
@@ -105,6 +107,13 @@ export class MapRenderer {
       const b = state.ports[R.to];
       if (a.slips.length && b.slips.length)
         this.drawRouteLine(this.px(a.def.pos), this.px(b.def.pos), R.color);
+    }
+
+    // proposed-route preview (hovering a candidate in the port detail panel)
+    if (this.previewFrom && this.previewTo) {
+      const a = state.ports[this.previewFrom];
+      const b = state.ports[this.previewTo];
+      if (a && b) this.drawPreviewLine(this.px(a.def.pos), this.px(b.def.pos));
     }
 
     // terminals: every port (hub included; locked islands dimmed with a padlock)
@@ -214,6 +223,20 @@ export class MapRenderer {
     ctx.lineTo(b.x, b.y);
     ctx.stroke();
     ctx.setLineDash([]);
+  }
+
+  private drawPreviewLine(a: Vec2, b: Vec2): void {
+    const { ctx } = this;
+    ctx.strokeStyle = "#f3c14bcc";
+    ctx.lineWidth = 3;
+    ctx.setLineDash([10, 6]);
+    ctx.lineDashOffset = -((performance.now() / 60) % 16); // marching ants
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.lineDashOffset = 0;
   }
 
   // segment-coloured queue: one short column of pips per segment

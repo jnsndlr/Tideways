@@ -1,5 +1,5 @@
-import { CONFIG, HUB_ID, maxDockTier, vesselById, vesselRank } from "../config";
-import type { Boat, GameState, PortState, RouteState } from "../types";
+import { CONFIG, HUB_ID, maxDockTier, nmBetween, vesselById, vesselRank } from "../config";
+import type { Boat, GameState, PortState, RouteDef, RouteState } from "../types";
 
 function newSegReps(value: number): Record<string, number> {
   const r: Record<string, number> = {};
@@ -174,4 +174,59 @@ export function upgradeSlip(state: GameState, portId: string, idx: number): bool
   state.cash -= cost;
   P.slips[idx] += 1;
   return true;
+}
+
+// ---- Direct routes (Phase 2) ----------------------------------------------
+
+/** Cost to open a new direct route of this length. */
+export function openRouteCost(distanceNm: number): number {
+  return CONFIG.routeCfg.openBaseCost + CONFIG.routeCfg.openCostPerNm * distanceNm;
+}
+
+/** Whether a direct route already exists between these two ports (either direction). */
+export function routeExistsBetween(state: GameState, a: string, b: string): boolean {
+  for (const id in state.routes) {
+    const def = state.routes[id].def;
+    if ((def.from === a && def.to === b) || (def.from === b && def.to === a)) return true;
+  }
+  return false;
+}
+
+/** Docked ports eligible to be connected directly to `portId` (excludes itself and already-linked ports). */
+export function routeCandidates(state: GameState, portId: string): PortState[] {
+  return Object.values(state.ports).filter(
+    (P) => P.def.id !== portId && P.slips.length > 0 && !routeExistsBetween(state, portId, P.def.id),
+  );
+}
+
+/** Open a new direct route between two already-docked ports. */
+export function openRoute(state: GameState, fromId: string, toId: string): RouteState | null {
+  const a = state.ports[fromId];
+  const b = state.ports[toId];
+  if (!a?.slips.length || !b?.slips.length) return null;
+  if (fromId === toId || routeExistsBetween(state, fromId, toId)) return null;
+  const distanceNm = Math.round(nmBetween(a.def.pos, b.def.pos) * 10) / 10;
+  const cost = openRouteCost(distanceNm);
+  if (state.cash < cost) return null;
+  state.cash -= cost;
+
+  const id = `r-${fromId}-${toId}`;
+  const def: RouteDef = {
+    id,
+    name: `${a.def.name} ↔ ${b.def.name}`,
+    color: b.def.color,
+    from: fromId,
+    to: toId,
+    distanceNm,
+    crossingMin: Math.round(distanceNm * CONFIG.routeCfg.minPerNm),
+  };
+  const R: RouteState = {
+    def,
+    sailingsToday: 0,
+    sailingsYesterday: 0,
+    footPrice: CONFIG.fare.foot,
+    carPrice: CONFIG.fare.car,
+  };
+  state.routes[id] = R;
+  return R;
 }

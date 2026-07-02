@@ -122,8 +122,8 @@ opportunity prompt — e.g. "~500 daily riders aren't traveling because the legs
 expensive; a direct route would capture them" — that justifies (and is unlocked by
 researching) a new direct route.
 
-### Phased build order
-1. **Network spine (model + engine, no new UI).** The big phase.
+### Phased build order (reordered 2026-07-01: route builder promoted to #3, network legibility UI bumped to #4)
+1. **Network spine (model + engine, no new UI).** — DONE (merged, see Phase 1 status above).
    - Ports become first-class; hub and every island are ports.
    - O/D queues live at ports, keyed by **(final destination, segment)** — replaces route
      `out`/`in`.
@@ -138,12 +138,49 @@ researching) a new direct route.
    - Gravity demand generator fills origin queues.
    - *End state:* the current hub↔island network already carries island→island traffic via
      hub transfers; hub slip contention starts to bite.
-2. **Direct interisland routes (player tool + UI).** Open a route between any two ports; dock
-   requirements at both ends; route-opening cost. Sim already supports it from Phase 1.
-3. **Network legibility UI.** Per-port unmet demand by destination, hub transfer volume,
-   underserved-pair hints. Makes transfers visible/playable.
-4. **(future) Multi-stop lines.** Chain stops into one sailing, resting on the O/D + transfer
-   foundation.
+2. **Direct interisland routes (player tool + UI).** — DONE (implemented 2026-07-01). Open a
+   route between any two docked ports; route-opening cost scaling with distance.
+   - **Route picker UI (decided 2026-06-30):** panel list + live map preview. Extend the
+     existing docked-port detail panel (`openDockHtml` in `src/ui/panel.ts`) with a "Routes"
+     section: existing routes from this port, plus a "+ Open a new route" list of other
+     docked ports not yet connected directly. Each candidate row shows distance/crossing time
+     (`nmBetween` in `src/config.ts`) and an opening cost (new formula, same shape as
+     `addSlipCost`). Hovering a row sets a `previewTo` on the canvas renderer, which draws a
+     dashed preview line; confirming calls a new `openRoute(state, fromId, toId)` in
+     `src/sim/state.ts` (mirrors `buildDock`/`addSlip`) that pushes a new `RouteDef`/
+     `RouteState`. Nothing else needs wiring: `getRouting()`'s cache key already includes
+     `Object.keys(state.routes)` (`src/sim/routing.ts`), so routing auto-invalidates, and
+     `canvas.ts` already iterates `state.routes` generically, so the new line just renders.
+     Scheduling a boat onto the new route stays the existing timeline drag-drop.
+3. **Route builder: multi-stop "Lines" + a saved-schedule generator (promoted from #4,
+   2026-07-01).** Directly targets the current biggest UX pain — repetitive manual
+   drag-and-drop scheduling; the underlying leg/fare/demand mechanics are fine, doing them
+   over and over is not. Two decoupled slices:
+   - **3a. Schedule templates/generator (no data-model risk, works with today's model).** A
+     form like "Route: Lopez · headway: every 60 min · 6am–9pm · 3 boats" that auto-stamps a
+     boat's `Trip[]` itinerary instead of manual per-trip dragging. Named, saved, editable,
+     re-generatable. Kills most of the tedium on its own, even for today's plain
+     out-and-back routes.
+   - **3b. True multi-stop loops (A→B→C→D→A as one continuous circuit).** Blocked today by
+     the boat phase machine (`src/sim/ferry.ts`): `Boat.itinerary` is a list of independent
+     *round trips* (`atHome → out → atFar → back → idle`), and `back` is hardcoded to return
+     to that leg's own `from` before the next itinerary entry starts — a boat can never be
+     sitting at B ready to sail B→C next. The fix is a **simplification, not a rewrite**:
+     generalize itinerary to "an ordered list of legs to walk forward, wrapping at the end."
+     `atHome`/`atFar` merge into one `atPort` (load/unload); `out`/`back` merge into one
+     `sailing`. The closing leg (D→A) stops being special-cased — it's just the last leg in
+     the loop, an ordinary route like any other. **No new demand/fare logic needed** — per-leg
+     fares and per-leg patience-reset were already decided for transfers, and a multi-stop
+     line is just the case where the "transfer" happens to be onto the same hull.
+   - Once 3b lands, the "Line" becomes the same saved-template concept as 3a but with an
+     ordered stop list instead of a single route; the line-builder UI reuses the port-picker
+     pattern from #2 (pick stops in order, map draws the loop, legs auto-open if missing).
+     "Assign boat to Line, headway H" replaces per-trip dragging entirely.
+4. **Network legibility UI (bumped from #3).** Per-port unmet demand by destination, hub
+   transfer volume, underserved-pair hints. Makes transfers visible/playable.
+
+(A separate, orthogonal general UI/usability pass — broader than routing legibility — is
+agreed to happen after #2 and before circling back to #3/#4.)
 
 ### Ties to existing systems
 Multiple routes calling at the same port makes per-port **slip count** mechanically

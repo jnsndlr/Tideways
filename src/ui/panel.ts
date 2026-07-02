@@ -1,8 +1,10 @@
-import { CONFIG, vesselById } from "../config";
+import { CONFIG, nmBetween, vesselById } from "../config";
 import {
   addSlipCost,
   buyBlocker,
+  openRouteCost,
   repFactor,
+  routeCandidates,
   segWaiting,
   slipUpgradeCost,
   waitingPeople,
@@ -27,6 +29,8 @@ export interface PanelCallbacks {
   onBuildDock: (portId: string) => void;
   onAddSlip: (portId: string) => void;
   onUpgradeSlip: (portId: string, slipIdx: number) => void;
+  onOpenRoute: (fromId: string, toId: string) => void;
+  onPreviewRoute: (fromId: string | null, toId: string | null) => void;
 }
 
 export class Panel {
@@ -204,12 +208,19 @@ export class Panel {
 
   selectDock(id: string | null): void {
     this.selectedDock = id ?? null; // a port id; the hub opens the home-port panel
+    this.cb.onPreviewRoute(null, null);
     this.renderDockDetail();
+  }
+
+  private routesForPort(portId: string): RouteState[] {
+    return Object.values(this.state.routes).filter(
+      (R) => R.def.from === portId || R.def.to === portId,
+    );
   }
 
   private dockKey(id: string): string {
     if (id === this.state.hubId) return `hub|${this.hubSlips.join(",")}|${this.state.boats.length}`;
-    return `${id}|${this.state.ports[id].slips.join(",")}`;
+    return `${id}|${this.state.ports[id].slips.join(",")}|${this.routesForPort(id).length}`;
   }
 
   /** Rebuild the detail structure. Called only when the panel changes shape
@@ -240,6 +251,14 @@ export class Panel {
     this.detailEl.querySelectorAll<HTMLElement>(".slip-up").forEach((b) => {
       const idx = parseInt(b.dataset.slip ?? "0", 10);
       b.addEventListener("click", () => this.cb.onUpgradeSlip(id, idx));
+    });
+    this.detailEl.querySelectorAll<HTMLElement>(".route-cand").forEach((row) => {
+      const to = row.dataset.to!;
+      row.addEventListener("mouseenter", () => this.cb.onPreviewRoute(id, to));
+      row.addEventListener("mouseleave", () => this.cb.onPreviewRoute(null, null));
+      row
+        .querySelector(".rc-open")
+        ?.addEventListener("click", () => this.cb.onOpenRoute(id, to));
     });
     this.detailKey = this.dockKey(id);
   }
@@ -372,7 +391,44 @@ export class Panel {
       </div>
       <div class="dd-slips-title">Slips</div>
       ${this.slipsHtml(P.slips)}
-      <div class="dd-hint">Each segment keeps its own reputation. A slip's size limits which vessels can dock here; the number of slips is how many ferries can berth at once — short a slip, arrivals wait offshore and run late.</div>`;
+      <div class="dd-hint">Each segment keeps its own reputation. A slip's size limits which vessels can dock here; the number of slips is how many ferries can berth at once — short a slip, arrivals wait offshore and run late.</div>
+      ${this.routesHtml(P)}`;
+  }
+
+  /** Existing connections from this port, plus candidate ports to open a new direct route to. */
+  private routesHtml(P: PortState): string {
+    const existing = this.routesForPort(P.def.id)
+      .map((R) => {
+        const otherId = R.def.from === P.def.id ? R.def.to : R.def.from;
+        const other = this.state.ports[otherId];
+        return `<div class="route-exist">
+          <span class="dot" style="background:${R.def.color}"></span>
+          <span>${other.def.name}</span><em>${R.def.distanceNm} nm</em></div>`;
+      })
+      .join("");
+
+    const candidates = routeCandidates(this.state, P.def.id);
+    const candRows = candidates
+      .map((other) => {
+        const dist = Math.round(nmBetween(P.def.pos, other.def.pos) * 10) / 10;
+        const crossing = Math.round(dist * CONFIG.routeCfg.minPerNm);
+        const cost = openRouteCost(dist);
+        return `<div class="route-cand" data-to="${other.def.id}">
+          <span class="dot" style="background:${other.def.color}"></span>
+          <span class="rc-name">${other.def.name}</span>
+          <span class="rc-meta">${dist} nm · ${crossing} min</span>
+          <button class="rc-open" data-cost="${cost}">Open · ${money(cost)}</button></div>`;
+      })
+      .join("");
+
+    return `<div class="dd-routes-title">Routes${existing ? "" : " — none yet"}</div>
+      ${existing ? `<div class="dd-routes">${existing}</div>` : ""}
+      ${
+        candidates.length
+          ? `<div class="dd-routes-title">Open a new route</div>
+             <div class="dd-route-candidates">${candRows}</div>`
+          : `<div class="dd-hint">All docked ports are already connected directly.</div>`
+      }`;
   }
 
   // ---- per-frame -----------------------------------------------------------

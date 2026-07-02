@@ -1,6 +1,6 @@
 import "./style.css";
 import { CONFIG } from "./config";
-import { addSlip, advance, buildDock, buyBoat, createState, upgradeSlip } from "./sim";
+import { addSlip, advance, buildDock, buyBoat, createState, openRoute, upgradeSlip } from "./sim";
 import { MapRenderer } from "./render/canvas";
 import { Panel } from "./ui/panel";
 import { Timeline } from "./ui/timeline";
@@ -43,6 +43,17 @@ const panel = new Panel(state, {
       else timeline.rebuild(); // bigger vessels now schedulable to this island
       panel.selectDock(portId);
     }
+  },
+  onOpenRoute: (fromId, toId) => {
+    if (openRoute(state, fromId, toId)) {
+      panel.buildRoutes(); // new card in the routes list
+      timeline.rebuild(); // new chip schedulable on the timetable
+      panel.selectDock(fromId); // re-render detail, candidate list updated
+    }
+  },
+  onPreviewRoute: (fromId, toId) => {
+    renderer.previewFrom = fromId;
+    renderer.previewTo = toId;
   },
 });
 

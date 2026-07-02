@@ -62,6 +62,14 @@ export const CONFIG = {
     hubStartSlips: [1, 1, 1], // home berths: count = fleet cap, tiers = ownable sizes
   },
 
+  // Direct route opening (Phase 2: player-created any-port↔any-port routes).
+  // crossingMin ≈ distanceNm × minPerNm, matching the seeded hub routes' ratio.
+  routeCfg: {
+    minPerNm: 3.0,
+    openBaseCost: 60_000,
+    openCostPerNm: 6_000,
+  },
+
   // Origin/destination demand — a gravity model over ports.
   // vol(A->B, seg) ∝ pop[seg](A) · draw[seg](B) · decay(distance), normalized so
   // each segment delivers a daily total across all docked O/D pairs. That total
