@@ -330,6 +330,37 @@ canvas {
   opacity: 0.6;
 }
 
+/* fuel depot (dock sheet) */
+.dd-fuel {
+  width: 100%;
+  margin-top: 12px;
+  padding: 11px;
+  min-height: var(--tap);
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--txt);
+  font-size: 12px;
+  font-weight: 700;
+}
+.dd-fuel:disabled {
+  color: var(--txt-dim);
+  opacity: 0.6;
+}
+.dd-fuel:not(:disabled):active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.dd-fuel-built {
+  margin-top: 12px;
+  padding: 9px 11px;
+  border-radius: 10px;
+  border: 1px solid rgba(91, 212, 154, 0.35);
+  color: var(--good);
+  font-size: 11px;
+  font-weight: 700;
+}
+
 /* slip list (any port) */
 .dd-slips-title,
 .dd-routes-title {
@@ -633,6 +664,37 @@ canvas {
 .fleet-sell:not(:disabled):active {
   color: var(--gold);
   border-color: var(--gold);
+}
+
+/* per-boat fuel + staffing controls */
+.fleet-ops {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.fleet-fuel {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.fleet-grade,
+.fleet-staff {
+  padding: 0 12px;
+  min-height: 40px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--txt-dim);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.fleet-grade {
+  margin-left: auto;
+}
+.fleet-grade:active,
+.fleet-staff:active {
+  color: var(--accent);
+  border-color: var(--accent);
 }
 
 /* buy menu */

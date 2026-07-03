@@ -35,6 +35,7 @@ export function createState(): GameState {
       rep: CONFIG.repStart,
       demandRep: CONFIG.repStart,
       slips,
+      fuelDepot: def.isHub === true, // the mainland always sells fuel
     };
   }
 
@@ -102,6 +103,9 @@ export function addBoat(state: GameState, classId: string): Boat {
     limping: false,
     serviceRequested: false,
     downMin: 0,
+    fuelNm: vesselById(classId).tankNm, // delivered with a full tank
+    fuelGrade: "standard",
+    staffing: "standard",
   };
   state.boats.push(boat);
   return boat;

@@ -2,6 +2,7 @@ import { CONFIG, vesselById } from "../config";
 import type {
   Boat,
   BoatPhase,
+  FuelGrade,
   GameState,
   Leg,
   Plan,
@@ -9,6 +10,7 @@ import type {
   RouteDef,
   Sheet,
   SheetDayType,
+  Staffing,
 } from "../types";
 import { createState } from "./state";
 
@@ -25,6 +27,7 @@ const SAVE_KEY = "tideways.save";
 
 interface PortSave {
   slips: number[];
+  fuelDepot?: boolean; // absent in pre-fuel saves -> hub only
   queues: PortQueues;
   servedToday: number;
   servedYesterday: number;
@@ -99,6 +102,7 @@ export function serialize(state: GameState): string {
     const P = state.ports[id];
     ports[id] = {
       slips: P.slips,
+      fuelDepot: P.fuelDepot,
       queues: P.queues,
       servedToday: P.servedToday,
       servedYesterday: P.servedYesterday,
@@ -168,6 +172,18 @@ const isSeg = (id: string): boolean => CONFIG.segments.some((s) => s.id === id);
 
 const PHASES: BoatPhase[] = ["idle", "atPort", "sailing", "maint", "repair"];
 
+const isFuelGrade = (g: unknown): g is FuelGrade =>
+  g === "low" || g === "standard" || g === "high";
+
+const isStaffing = (s: unknown): s is Staffing =>
+  s === "minimal" || s === "standard" || s === "full";
+
+/** Saved tank level clamped to the class tank; pre-fuel saves start full. */
+const cleanFuelNm = (v: unknown, classId: string): number => {
+  const tank = vesselById(classId).tankNm;
+  return Math.max(0, Math.min(tank, num(v, tank)));
+};
+
 const DAY_TYPES: SheetDayType[] = ["any", "weekday", "weekend"];
 
 const isSeasonOrAny = (s: unknown): s is string =>
@@ -206,7 +222,12 @@ function cleanQueues(src: unknown, state: GameState): PortQueues {
       const foot = Math.max(0, num(q?.foot, 0));
       const car = Math.max(0, num(q?.car, 0));
       if (foot <= 0 && car <= 0) continue;
-      (out[dest] ??= {})[segId] = { foot, car, wait: Math.max(0, num(q?.wait, 0)) };
+      (out[dest] ??= {})[segId] = {
+        foot,
+        car,
+        wait: Math.max(0, num(q?.wait, 0)),
+        missed: (q as { missed?: unknown })?.missed === true,
+      };
     }
   }
   return out;
@@ -285,6 +306,7 @@ export function deserialize(raw: string): GameState | null {
           .map((t) => Math.round(num(t, 0)))
           .filter((t) => t >= 0 && t < CONFIG.vesselClasses.length);
       }
+      P.fuelDepot = P.def.isHub === true || sp.fuelDepot === true;
       P.queues = cleanQueues(sp.queues, state);
       P.servedToday = Math.max(0, num(sp.servedToday, 0));
       P.servedYesterday = Math.max(0, num(sp.servedYesterday, 0));
@@ -432,6 +454,9 @@ export function deserialize(raw: string): GameState | null {
           limping: false,
           serviceRequested: sb.serviceRequested === true,
           downMin: 0,
+          fuelNm: cleanFuelNm(sb.fuelNm, sb.classId),
+          fuelGrade: isFuelGrade(sb.fuelGrade) ? sb.fuelGrade : "standard",
+          staffing: isStaffing(sb.staffing) ? sb.staffing : "standard",
         });
         continue;
       }
@@ -473,6 +498,9 @@ export function deserialize(raw: string): GameState | null {
         limping: active && sb.limping === true,
         serviceRequested: sb.serviceRequested === true,
         downMin: inYard ? Math.max(0, num(sb.downMin, 0)) : 0,
+        fuelNm: cleanFuelNm(sb.fuelNm, sb.classId),
+        fuelGrade: isFuelGrade(sb.fuelGrade) ? sb.fuelGrade : "standard",
+        staffing: isStaffing(sb.staffing) ? sb.staffing : "standard",
       });
     }
 

@@ -15,10 +15,30 @@ export interface VesselClass {
   peopleCap: number; // total people incl. those in cars
   carCap: number; // car-deck slots (0 = passenger-only)
   speedFactor: number; // >1 faster: crossing = route.crossingMin / speedFactor
-  fuelPerNm: number; // $ per nautical mile per crossing
+  fuelPerNm: number; // $ per nautical mile at STANDARD grade (paid when refueling)
+  tankNm: number; // fuel tank size, in nautical miles of range
   cost: number;
   moorageDaily: number; // small fixed daily cost to own the hull (moorage/insurance)
-  crewPerSailing: number; // crew wages charged per departure (each leg of a round trip)
+  crewPerSailing: number; // crew wages charged per departure, at STANDARD staffing
+}
+
+// Fuel grades: what's in the tank changes price AND how fast the engine wears.
+export type FuelGrade = "low" | "standard" | "high";
+
+export interface FuelGradeDef {
+  name: string;
+  priceMult: number; // × fuelPerNm when buying this grade
+  wearMult: number; // × condition wear per nm while burning this grade
+}
+
+// Staffing levels: how many crew each boat sails with.
+export type Staffing = "minimal" | "standard" | "full";
+
+export interface StaffingDef {
+  name: string;
+  crewCostMult: number; // × crewPerSailing wages each departure
+  loadTimeMult: number; // × dwell (loading) time at each terminal
+  wearMult: number; // × condition wear per nm (skeleton crews skip upkeep)
 }
 
 export interface SegmentDef {
@@ -72,6 +92,7 @@ export interface SegQueue {
   foot: number;
   car: number;
   wait: number; // minutes the oldest in this dest/seg has waited (resets per leg)
+  missed: boolean; // a sailing they could use departed without them (starts the patience clock)
 }
 
 // Riders waiting at a port, bucketed by final destination then segment.
@@ -97,6 +118,7 @@ export interface PortState {
   rep: number; // port-average reputation (derived; for HUD + map marker)
   demandRep: number; // port-average snapshot (derived; for summaries)
   slips: number[]; // size tier of each slip; empty = locked port (no dock)
+  fuelDepot: boolean; // boats can refuel here (the hub always can; islands buy it)
 }
 
 export interface RouteState {
@@ -170,6 +192,9 @@ export interface Boat {
   limping: boolean; // broke down this crossing — half speed, yard stay on arrival
   serviceRequested: boolean; // player queued a scheduled overhaul for the next idle moment
   downMin: number; // total minutes of the current yard stay (maint/repair)
+  fuelNm: number; // fuel left in the tank, in nm of range (empty = 10% crawl)
+  fuelGrade: FuelGrade; // what gets pumped at the next fill-up
+  staffing: Staffing; // crew level this boat sails with
 }
 
 export interface GameState {

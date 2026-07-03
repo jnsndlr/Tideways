@@ -2,13 +2,47 @@ import { CONFIG, vesselById } from "../config";
 import type { GameState, PortState, SegmentDef } from "../types";
 import { weekdayIndex } from "./calendar";
 import { accrueDemand } from "./demand";
-import { stepBoat } from "./ferry";
+import { otherEnd, stepBoat } from "./ferry";
 import { weeklyGrowthTick } from "./growth";
+import { getRouting, type Routing } from "./routing";
+import { todaysLegs } from "./sheets";
 import { sellPrice } from "./state";
 
-/** Per-segment balking: once a queue waits past that segment's patience, a
- *  trickle gives up and the origin port's reputation sours. */
-function updatePortQueues(state: GameState, P: PortState, dtMin: number): void {
+/** Ports a scheduled sailing will still depart FROM today, mapped to the ports
+ *  those sailings head TO. Riders whose next hop still has a departure coming
+ *  hold out patiently; only queues the timetable has abandoned may balk before
+ *  a boat has come. Empty map once the operating day is over. */
+function remainingDepartures(state: GameState): Map<string, Set<string>> {
+  const map = new Map<string, Set<string>>();
+  if (state.clock >= CONFIG.operatingEnd) return map;
+  for (const boat of state.boats) {
+    const legs = todaysLegs(state, boat);
+    // a sailing boat's current leg has already departed; anything else at
+    // legIdx (loading, or idle waiting on its slot) is still to come
+    const start = boat.legIdx + (boat.phase === "sailing" ? 1 : 0);
+    for (let i = start; i < legs.length; i++) {
+      const R = state.routes[legs[i].routeId];
+      if (!R) continue;
+      let set = map.get(legs[i].from);
+      if (!set) map.set(legs[i].from, (set = new Set()));
+      set.add(otherEnd(R, legs[i].from));
+    }
+  }
+  return map;
+}
+
+/** Per-segment balking. Riders never give up while a departure they can use is
+ *  still scheduled today AND no boat has left them behind yet. Once a sailing
+ *  comes and goes without them (q.missed, set in boardAt) — or the timetable
+ *  simply has nothing left for them today — their patience clock counts, and
+ *  past the segment's patienceMin a trickle walks away and reputation sours. */
+function updatePortQueues(
+  state: GameState,
+  P: PortState,
+  dtMin: number,
+  departs: Map<string, Set<string>>,
+  routing: Routing,
+): void {
   for (const dest in P.queues) {
     for (const seg of CONFIG.segments) {
       const q = P.queues[dest][seg.id];
@@ -17,19 +51,25 @@ function updatePortQueues(state: GameState, P: PortState, dtMin: number): void {
       if (people > 0.5) q.wait += dtMin;
       else {
         q.wait = 0;
+        q.missed = false;
         continue;
       }
-      if (q.wait > seg.patienceMin) {
-        const r = CONFIG.balkRatePerMin * dtMin;
-        const bFoot = q.foot * r;
-        const bCar = q.car * r;
-        q.foot -= bFoot;
-        q.car -= bCar;
-        const lost = bFoot + bCar * CONFIG.avgOccupancy;
-        P.balkedToday += lost;
-        P.segBalkedWeek[seg.id] += lost;
-        P.segRep[seg.id] -= lost * CONFIG.repBalkLoss;
+      if (q.wait <= seg.patienceMin) continue;
+      if (!q.missed) {
+        // no boat has failed them yet — they hold as long as a departure
+        // toward their next hop is still on today's timetable
+        const hop = routing.nextHop(P.def.id, dest);
+        if (hop && departs.get(P.def.id)?.has(hop)) continue;
       }
+      const r = CONFIG.balkRatePerMin * dtMin;
+      const bFoot = q.foot * r;
+      const bCar = q.car * r;
+      q.foot -= bFoot;
+      q.car -= bCar;
+      const lost = bFoot + bCar * CONFIG.avgOccupancy;
+      P.balkedToday += lost;
+      P.segBalkedWeek[seg.id] += lost;
+      P.segRep[seg.id] -= lost * CONFIG.repBalkLoss;
     }
   }
 }
@@ -94,7 +134,9 @@ export function step(state: GameState, dtMin: number): void {
   }
 
   accrueDemand(state, dtMin);
-  for (const id in state.ports) updatePortQueues(state, state.ports[id], dtMin);
+  const departs = remainingDepartures(state);
+  const routing = getRouting(state);
+  for (const id in state.ports) updatePortQueues(state, state.ports[id], dtMin, departs, routing);
   for (const boat of state.boats) stepBoat(state, boat, dtMin);
 
   let sum = 0;

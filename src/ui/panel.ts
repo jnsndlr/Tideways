@@ -38,10 +38,13 @@ export interface PanelCallbacks {
   onBuy: (classId: string) => void;
   onSell: (boatId: number) => void;
   onService: (boatId: number) => void;
+  onCycleGrade: (boatId: number) => void;
+  onCycleStaffing: (boatId: number) => void;
   onSpeed: (speed: number) => void;
   onBuildDock: (portId: string) => void;
   onAddSlip: (portId: string) => void;
   onUpgradeSlip: (portId: string, slipIdx: number) => void;
+  onBuildFuelDepot: (portId: string) => void;
   onOpenRoute: (fromId: string, toId: string) => void;
   onPreviewRoute: (fromId: string | null, toId: string | null) => void;
   onPlanService: (fromId: string, toId: string) => void;
@@ -74,6 +77,9 @@ export class Panel {
   private fleetRows: {
     boatId: number;
     cond: HTMLElement;
+    fuel: HTMLElement;
+    grade: HTMLButtonElement;
+    staff: HTMLButtonElement;
     service: HTMLButtonElement;
     sell: HTMLButtonElement;
   }[] = [];
@@ -170,11 +176,29 @@ export class Panel {
     }
   }
 
-  /** Live half of a fleet row: condition, yard status, service + sell buttons. */
-  private refreshFleetRow(boat: Boat, row: { cond: HTMLElement; service: HTMLButtonElement; sell: HTMLButtonElement }): void {
+  /** Live half of a fleet row: condition, fuel, grade/staffing toggles, yard
+   *  status, service + sell buttons. */
+  private refreshFleetRow(
+    boat: Boat,
+    row: {
+      cond: HTMLElement;
+      fuel: HTMLElement;
+      grade: HTMLButtonElement;
+      staff: HTMLButtonElement;
+      service: HTMLButtonElement;
+      sell: HTMLButtonElement;
+    },
+  ): void {
     const tier = conditionTier(boat.condition);
     row.cond.textContent = `${Math.round(boat.condition)}% · ${tier.name}`;
     row.cond.style.color = tier.color;
+    const tank = vesselById(boat.classId).tankNm;
+    const frac = tank > 0 ? boat.fuelNm / tank : 0;
+    row.fuel.textContent = `⛽ ${Math.round(frac * 100)}%`;
+    row.fuel.style.color =
+      frac <= 0 ? "var(--bad)" : frac < CONFIG.fuelCfg.refuelBelowFrac * 2 ? "#f3c14b" : "";
+    row.grade.textContent = `Fuel: ${CONFIG.fuelCfg.grades[boat.fuelGrade].name}`;
+    row.staff.textContent = `Crew: ${CONFIG.staffing[boat.staffing].name}`;
     const inYard = boat.phase === "maint" || boat.phase === "repair";
     if (inYard) {
       const hoursLeft = Math.max(1, Math.ceil((boat.downMin - boat.timer) / 60));
@@ -212,6 +236,11 @@ export class Panel {
           <span class="fleet-cond"></span>
           <button class="fleet-service"></button>
           <button class="fleet-sell"></button>
+        </div>
+        <div class="fleet-ops">
+          <span class="fleet-fuel"></span>
+          <button class="fleet-grade"></button>
+          <button class="fleet-staff"></button>
         </div>`;
       const service = row.querySelector<HTMLButtonElement>(".fleet-service")!;
       service.addEventListener("click", () => this.cb.onService(boat.id));
@@ -220,9 +249,16 @@ export class Panel {
         if (confirm(`Sell ${boat.name} for ${money(sellPrice(boat))}? Its timetable is discarded.`))
           this.cb.onSell(boat.id);
       });
+      const grade = row.querySelector<HTMLButtonElement>(".fleet-grade")!;
+      grade.addEventListener("click", () => this.cb.onCycleGrade(boat.id));
+      const staff = row.querySelector<HTMLButtonElement>(".fleet-staff")!;
+      staff.addEventListener("click", () => this.cb.onCycleStaffing(boat.id));
       const entry = {
         boatId: boat.id,
         cond: row.querySelector<HTMLElement>(".fleet-cond")!,
+        fuel: row.querySelector<HTMLElement>(".fleet-fuel")!,
+        grade,
+        staff,
         service,
         sell,
       };
@@ -290,7 +326,7 @@ export class Panel {
 
   private dockKey(id: string): string {
     const P = this.state.ports[id];
-    return `${id}|${P.slips.join(",")}|${this.routesForPort(id).length}|${this.state.boats.length}`;
+    return `${id}|${P.slips.join(",")}|${P.fuelDepot ? "F" : ""}|${this.routesForPort(id).length}|${this.state.boats.length}`;
   }
 
   /** Rebuild the sheet structure. Called only when its shape changes (selection /
@@ -327,6 +363,9 @@ export class Panel {
     this.detailEl
       .querySelector(".slip-add")
       ?.addEventListener("click", () => this.cb.onAddSlip(id));
+    this.detailEl
+      .querySelector(".dd-fuel")
+      ?.addEventListener("click", () => this.cb.onBuildFuelDepot(id));
     this.detailEl.querySelectorAll<HTMLElement>(".slip-up").forEach((b) => {
       const idx = parseInt(b.dataset.slip ?? "0", 10);
       b.addEventListener("click", () => this.cb.onUpgradeSlip(id, idx));
@@ -475,6 +514,7 @@ export class Panel {
       <div class="dd-slips-title">Berths</div>
       ${this.slipsHtml(this.hubSlips)}
       ${this.routesHtml(hub)}
+      <div class="dd-fuel-built">⛽ Fuel dock — every boat can refuel here</div>
       <div class="dd-hint">Berths cap your fleet size; a slip's size sets the largest vessel you can base. The daily ledger lives in the Company tab.</div>`;
   }
 
@@ -528,7 +568,17 @@ export class Panel {
       ${this.routesHtml(P)}
       <div class="dd-slips-title">Slips</div>
       ${this.slipsHtml(P.slips)}
+      ${this.fuelDepotHtml(P)}
       <div class="dd-hint">Each segment keeps its own reputation. A slip's size limits which vessels can dock here; short a slip, arrivals wait offshore and run late.</div>`;
+  }
+
+  /** Fuel depot status/build block for an island dock sheet. */
+  private fuelDepotHtml(P: PortState): string {
+    if (P.fuelDepot)
+      return `<div class="dd-fuel-built">⛽ Refueling depot — boats can fill up here</div>`;
+    const cost = CONFIG.fuelCfg.fuelDepotCost;
+    return `<button class="dd-fuel" data-cost="${cost}">⛽ Build fuel depot · ${money(cost)}</button>
+      <div class="dd-hint">Without a depot, boats can only refuel at ${this.state.ports[this.state.hubId].def.name}. Low tanks refill automatically at any fuel port.</div>`;
   }
 
   /** Routes touching this port (with fare steppers) + candidates for new direct routes. */

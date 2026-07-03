@@ -166,6 +166,42 @@ staffing tier comes first, likely alongside #5 or after #7); full 3D.
 `document.querySelector` calls per frame (`src/ui/panel.ts`) — cache element references once
 at build time. Free battery on mobile.
 
+## Boat dynamics + balance pass (2026-07-02, interleaved before milestone #7)
+
+Playtest verdict after #4–6: wear sank you constantly, fuel made even a modest schedule
+insolvent from $5M ("we turned off the money printer and made it TOO hard"), and riders
+balked before a boat ever came. This pass rebalanced and added the first per-boat agency
+levers (the coarse staffing tier long queued for "alongside #5 or after #7" landed here):
+
+- **Balance:** `wearPerNm` cut 10× (0.05 → 0.005 — a watch-it-over-weeks stat, ~1 pt/day in
+  heavy service); `fuelPerNm` cut to ~⅓ (long routes were unprofitable at any load). Verified
+  3 days headless: one Hiyu on Lopez nets ≈ +$9k/day.
+- **Config for non-technical tuning:** `src/config.ts` fully reorganized — numbered sections
+  with a table of contents, every number carries units + what raising/lowering does. (User
+  couldn't find fuel costs by reading it.)
+- **Patience rework:** nobody balks before a sailing has actually failed them. `SegQueue`
+  gained `missed`; boarding leftovers set it and RESTART the wait clock (`boardAt`). Balking
+  requires wait > patience AND (missed, or no departure toward their next hop remains on
+  today's timetable — `remainingDepartures` in `src/sim/sim.ts`). After `operatingEnd` the
+  map is empty, so abandoned queues still drain overnight.
+- **Staffing meter** (`src/sim/staffing.ts`, `CONFIG.staffing`): per-boat Bare bones /
+  Standard / Well staffed. Multipliers on crew wages, wear, and dwell time —
+  `dwellMinutes(boat)` is now THE configurable loading speed (ferry.ts reads it live;
+  schedules still assume standard dwell, so understaffing shows up as cascading lateness and
+  full staffing claws delays back).
+- **Fuel tanks + grades** (`src/sim/fuel.ts`, `CONFIG.fuelCfg`): tanks in nm of range
+  (`tankNm` per class), drained continuously while sailing; refill (and PAY, at the pump —
+  `chargeSailing` no longer charges fuel) when below 5% at a fuel port. Hub always sells
+  fuel; islands buy a $220k depot (`PortState.fuelDepot`). Grades low/standard/premium trade
+  price vs. wear. Dry tank = 10% crawl until reaching fuel. Cost projections
+  (`projectedDailyCost`, `stampPlan`) take the boat's grade/staffing.
+- **UI:** fleet rows grew ⛽ level + fuel-grade + crew toggles; dock sheets a depot
+  build/status block. Saves stay v2 (new fields defaulted on old saves; hub depot forced on).
+
+Design intent (user): fuel + crew controls give the player agency over total daily spend
+with real tradeoffs. The staffing tier remains the placeholder the future employee system
+replaces (min-crew wage floor + happiness above it).
+
 ## Live scheduler cost projection (built 2026-07-01, ahead of milestone #4)
 
 User: "I need to be able to realtime see the cost of my routing, not the previous day's

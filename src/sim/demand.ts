@@ -97,7 +97,7 @@ export function accrueDemand(state: GameState, dtMin: number): void {
       const car = people * seg.carShare * carP;
       const foot = people * (1 - seg.carShare) * footP;
       const q = (O.queues[to] ??= {});
-      const sq = (q[seg.id] ??= { foot: 0, car: 0, wait: 0 });
+      const sq = (q[seg.id] ??= { foot: 0, car: 0, wait: 0, missed: false });
       sq.foot += foot;
       sq.car += car / CONFIG.avgOccupancy; // store car COUNT, not people
     }
