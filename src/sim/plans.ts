@@ -1,7 +1,9 @@
-import { CONFIG, vesselById } from "../config";
+import { CONFIG } from "../config";
 import type { Boat, GameState, Leg, Plan, Sheet } from "../types";
 import { routeBetween } from "./demand";
+import { fuelPricePerNm } from "./fuel";
 import { crossingFor, hasOverlap, legDuration } from "./schedule";
+import { crewCostPerSailing } from "./staffing";
 import { addLeg, openRoute } from "./state";
 
 // Service plans — the live objects behind generated timetables. A plan is an
@@ -130,14 +132,13 @@ export function stampPlan(
       result.skipped++;
       continue;
     }
-    const vc = vesselById(boat.classId);
     for (const l of legs) {
       lane.push({ id: -1, routeId: l.routeId, from: l.from, depart: l.depart, planId: plan.id });
       lane.sort((a, b) => a.depart - b.depart);
       if (!dryRun) addLeg(state, sheet, boat.id, l.routeId, l.from, l.depart, plan.id);
       result.legs++;
-      result.fuel += state.routes[l.routeId].def.distanceNm * vc.fuelPerNm;
-      result.crew += vc.crewPerSailing;
+      result.fuel += state.routes[l.routeId].def.distanceNm * fuelPricePerNm(boat.classId, boat.fuelGrade);
+      result.crew += crewCostPerSailing(boat);
     }
     result.stamped++;
   }

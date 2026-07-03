@@ -4,9 +4,12 @@ import {
   addSlip,
   advance,
   buildDock,
+  buildFuelDepot,
   buyBoat,
   clearSave,
   createState,
+  cycleGrade,
+  cycleStaffing,
   loadGame,
   openRoute,
   requestService,
@@ -44,6 +47,20 @@ const panel = new Panel(state, {
     const boat = state.boats.find((b) => b.id === boatId);
     if (boat) requestService(boat); // queue/cancel; the row's live refresh shows it
   },
+  onCycleGrade: (boatId) => {
+    const boat = state.boats.find((b) => b.id === boatId);
+    if (boat) {
+      cycleGrade(boat);
+      timeline.rebuild(); // projected fuel cost per lane changes with the grade
+    }
+  },
+  onCycleStaffing: (boatId) => {
+    const boat = state.boats.find((b) => b.id === boatId);
+    if (boat) {
+      cycleStaffing(boat);
+      timeline.rebuild(); // projected crew cost per lane changes with staffing
+    }
+  },
   onSpeed: (speed) => {
     state.speed = speed;
   },
@@ -65,6 +82,9 @@ const panel = new Panel(state, {
       else timeline.rebuild(); // bigger vessels now schedulable to this island
       panel.selectDock(portId);
     }
+  },
+  onBuildFuelDepot: (portId) => {
+    if (buildFuelDepot(state, portId)) panel.selectDock(portId); // re-render: depot built
   },
   onOpenRoute: (fromId, toId) => {
     if (openRoute(state, fromId, toId)) {

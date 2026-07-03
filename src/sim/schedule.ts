@@ -1,5 +1,7 @@
 import { CONFIG, vesselById } from "../config";
-import type { Leg, RouteState } from "../types";
+import type { Boat, Leg, RouteState } from "../types";
+import { fuelPricePerNm } from "./fuel";
+import { crewCostPerSailing } from "./staffing";
 
 /** Effective one-way crossing time for a vessel on a route. */
 export function crossingFor(R: RouteState, classId: string): number {
@@ -47,22 +49,24 @@ export function earliestFreeSlot(
 }
 
 /** Projected fuel + crew cost of a timetable AS SCHEDULED (not yet run) — the
- *  live readout on the Schedule tab. One sailing per leg, matching
- *  chargeSailing in ferry.ts. Pure projection: independent of the clock,
- *  demand, or whether the boat actually departs on time. */
+ *  live readout on the Schedule tab. One sailing per leg. Fuel is really paid
+ *  in lumps at the pump, so this projects the per-nm price of the boat's
+ *  selected grade; crew reflects the boat's staffing level. Pure projection:
+ *  independent of the clock, demand, or whether the boat departs on time. */
 export function projectedDailyCost(
   legs: Leg[],
-  classId: string,
+  boat: Pick<Boat, "classId" | "fuelGrade" | "staffing">,
   routes: Record<string, RouteState>,
 ): { fuel: number; crew: number } {
-  const vc = vesselById(classId);
+  const fuelNm = fuelPricePerNm(boat.classId, boat.fuelGrade);
+  const crewEach = crewCostPerSailing(boat);
   let fuel = 0;
   let crew = 0;
   for (const l of legs) {
     const R = routes[l.routeId];
     if (!R) continue; // route removed since the leg was scheduled
-    fuel += R.def.distanceNm * vc.fuelPerNm;
-    crew += vc.crewPerSailing;
+    fuel += R.def.distanceNm * fuelNm;
+    crew += crewEach;
   }
   return { fuel, crew };
 }

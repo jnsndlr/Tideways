@@ -1,9 +1,11 @@
 import { CONFIG, vesselById } from "../config";
 import type { Boat, GameState, PortQueues, RouteState } from "../types";
+import { gradeDef, maybeRefuel } from "./fuel";
 import { beginRepair, beginService, breakdownChance } from "./maintenance";
 import { crossingFor } from "./schedule";
 import { getRouting } from "./routing";
 import { todaysLegs } from "./sheets";
+import { crewCostPerSailing, dwellMinutes, staffingDef } from "./staffing";
 
 /** The opposite end of a route from `port`. */
 export function otherEnd(R: RouteState, port: string): string {
@@ -75,10 +77,20 @@ export function boardAt(state: GameState, boat: Boat, port: string, next: string
     const takeFoot = q.foot * footFrac;
     q.car -= takeCar;
     q.foot -= takeFoot;
-    if (q.foot < 0.5 && q.car < 0.5) q.wait = 0;
+    if (q.foot < 0.5 && q.car < 0.5) {
+      q.wait = 0;
+      q.missed = false;
+    }
+
+    // left behind by a boat they could have used — their patience clock starts
+    // now (nobody balks before a sailing has actually come and gone without them)
+    if (q.foot + q.car > 0.5 && !q.missed) {
+      q.missed = true;
+      q.wait = 0;
+    }
 
     const c = (boat.cargo[dest] ??= {});
-    const cb = (c[seg] ??= { foot: 0, car: 0, wait: 0 });
+    const cb = (c[seg] ??= { foot: 0, car: 0, wait: 0, missed: false });
     cb.foot += takeFoot;
     cb.car += takeCar;
 
@@ -110,7 +122,7 @@ export function arriveAt(state: GameState, boat: Boat, port: string): void {
       } else {
         // transfer: rejoin this port's queue toward the final destination (wait resets)
         const q = (P.queues[dest] ??= {});
-        const sq = (q[seg] ??= { foot: 0, car: 0, wait: 0 });
+        const sq = (q[seg] ??= { foot: 0, car: 0, wait: 0, missed: false });
         sq.foot += cb.foot;
         sq.car += cb.car;
       }
@@ -120,16 +132,20 @@ export function arriveAt(state: GameState, boat: Boat, port: string): void {
   refreshPax(boat);
 }
 
-/** Costs of one departure: fuel for the crossing + the sailing's crew wages.
- *  Also wears the hull down and rolls the sailing's breakdown die — a boat
- *  that fails limps across at half speed and goes straight into the yard. */
+/** Costs of one departure: the sailing's crew wages (staffing-scaled). Fuel is
+ *  paid at the pump instead (fuel.ts) — sailing just drains the tank. Also
+ *  wears the hull down (fuel grade and staffing modulate the rate) and rolls
+ *  the sailing's breakdown die — a boat that fails limps across at half speed
+ *  and goes straight into the yard. */
 export function chargeSailing(state: GameState, boat: Boat, R: RouteState): void {
-  const vc = vesselById(boat.classId);
-  const fuel = R.def.distanceNm * vc.fuelPerNm;
-  state.cash -= fuel + vc.crewPerSailing;
-  state.fuelToday += fuel;
-  state.crewToday += vc.crewPerSailing;
-  boat.condition = Math.max(0, boat.condition - R.def.distanceNm * CONFIG.maint.wearPerNm);
+  const crew = crewCostPerSailing(boat);
+  state.cash -= crew;
+  state.crewToday += crew;
+  const wearMult = staffingDef(boat.staffing).wearMult * gradeDef(boat.fuelGrade).wearMult;
+  boat.condition = Math.max(
+    0,
+    boat.condition - R.def.distanceNm * CONFIG.maint.wearPerNm * wearMult,
+  );
   boat.limping = Math.random() < breakdownChance(boat.condition);
 }
 
@@ -156,6 +172,8 @@ export function stepBoat(state: GameState, boat: Boat, dtMin: number): void {
 
   switch (boat.phase) {
     case "idle": {
+      // low tank + a port that sells fuel = fill up while sitting here
+      maybeRefuel(state, boat, boat.lastPort);
       // a queued overhaul takes priority over the timetable — that's the
       // planning decision: the boat is out of service while the yard has it
       if (boat.serviceRequested) {
@@ -180,13 +198,16 @@ export function stepBoat(state: GameState, boat: Boat, dtMin: number): void {
         boat.phase = "atPort";
         boat.timer = 0;
         boat.tripLate = state.clock - leg.depart > CONFIG.lateGraceMin;
+        maybeRefuel(state, boat, leg.from); // top up (if low) before the crossing
       }
       break;
     }
     case "atPort": {
       const R = state.routes[boat.routeId!];
       boat.timer += dtMin;
-      if (boat.timer >= CONFIG.loadMinutes) {
+      // loading speed is a staffing lever: skeleton crews load slower, full
+      // crews turn the boat around faster
+      if (boat.timer >= dwellMinutes(boat)) {
         boardAt(state, boat, boat.sailFrom!, otherEnd(R, boat.sailFrom!), R);
         chargeSailing(state, boat, R);
         R.sailingsToday++;
@@ -199,8 +220,14 @@ export function stepBoat(state: GameState, boat: Boat, dtMin: number): void {
     }
     case "sailing": {
       const R = state.routes[boat.routeId!];
-      const limp = boat.limping ? CONFIG.maint.limpSpeedFactor : 1;
-      boat.p += (dtMin * limp) / crossingFor(R, boat.classId);
+      // an empty tank is worse than a breakdown: crawl until the boat reaches
+      // a port that sells fuel (the crossing still drains nothing — it's dry)
+      const speedMult =
+        (boat.limping ? CONFIG.maint.limpSpeedFactor : 1) *
+        (boat.fuelNm <= 0 ? CONFIG.fuelCfg.emptySpeedFactor : 1);
+      const dp = (dtMin * speedMult) / crossingFor(R, boat.classId);
+      boat.p += dp;
+      boat.fuelNm = Math.max(0, boat.fuelNm - R.def.distanceNm * dp);
       if (boat.p >= 1) {
         boat.p = 1;
         const dest = otherEnd(R, boat.sailFrom!);

@@ -311,7 +311,7 @@ export class Timeline {
     row.appendChild(lane);
 
     // live projected cost of this lane AS SCHEDULED on the selected sheet
-    const { fuel, crew } = projectedDailyCost(legs, boat.classId, this.state.routes);
+    const { fuel, crew } = projectedDailyCost(legs, boat, this.state.routes);
     const cost = document.createElement("div");
     cost.className = "tl-cost";
     cost.innerHTML =
